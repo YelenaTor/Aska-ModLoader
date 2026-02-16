@@ -1,6 +1,9 @@
 using Microsoft.Win32;
 using ModManager.Core.Interfaces;
 using Serilog;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.Versioning;
 using System.Runtime.InteropServices;
 
 namespace ModManager.Core.Services;
@@ -8,6 +11,7 @@ namespace ModManager.Core.Services;
 /// <summary>
 /// Production-grade Steam auto-detection framework for ASKA (AppID 1898300)
 /// </summary>
+[SupportedOSPlatform("windows")]
 public class AskaSteamDetectionService
 {
     private const int AskaAppId = 1898300;

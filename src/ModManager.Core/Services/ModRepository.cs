@@ -17,6 +17,7 @@ public class ModRepository : IModRepository
     private readonly FileOperationsService _fileOps;
     private readonly ModInstallationService _installationService;
     private readonly ModScanner _scanner;
+    private readonly DependencyResolutionService _dependencyResolver;
 
     public ModRepository(ILogger logger, string askaPath)
     {
@@ -31,6 +32,7 @@ public class ModRepository : IModRepository
             _fileOps, 
             askaPath);
         _scanner = new ModScanner(logger);
+        _dependencyResolver = new DependencyResolutionService(logger);
         
         // Initialize LiteDB
         var dbPath = Path.Combine(askaPath, "BepInEx", "ModManager.db");
@@ -41,36 +43,81 @@ public class ModRepository : IModRepository
         modsCollection.EnsureIndex(x => x.Id, true);
         modsCollection.EnsureIndex(x => x.Name);
         modsCollection.EnsureIndex(x => x.IsEnabled);
+
+        var errorsCollection = _database.GetCollection<RuntimeError>("errors");
+        errorsCollection.EnsureIndex(x => x.Timestamp);
+        errorsCollection.EnsureIndex(x => x.ModId);
+
+        // Apply cleanup policy on initialization (keep last 100 errors)
+        ClearRuntimeErrorsAsync(100).GetAwaiter().GetResult();
     }
 
     private bool ValidateDependencies(ModInfo mod)
     {
+        return ValidateDependencies(mod, out _);
+    }
+
+    private bool ValidateDependencies(ModInfo mod, out string? failureReason)
+    {
+        failureReason = null;
+
         if (mod.Dependencies == null || mod.Dependencies.Count == 0)
         {
             return true;
         }
 
         var modsCollection = _database.GetCollection<ModInfo>("mods");
+        var allMods = modsCollection.FindAll().ToList();
 
-        foreach (var dep in mod.Dependencies)
+        // Check for missing/disabled deps and version ranges first
+        foreach (var dep in mod.Dependencies.Where(d => !d.Optional))
         {
-            if (dep.Optional)
-            {
-                continue;
-            }
-
-            var depMod = modsCollection.FindOne(x => x.Id == dep.Id);
+            var depMod = allMods.FirstOrDefault(m => string.Equals(m.Id, dep.Id, StringComparison.OrdinalIgnoreCase));
             if (depMod == null)
             {
-                _logger.Warning("Missing dependency {DepId} for mod {ModId}", dep.Id, mod.Id);
+                failureReason = $"Missing dependency '{dep.Id}' for '{mod.Name}'.";
+                _logger.Warning(failureReason);
                 return false;
             }
 
-            if (!VersionService.SatisfiesRangeLegacy(depMod.Version ?? "1.0.0", string.IsNullOrWhiteSpace(dep.MinVersion) ? ">=0.0.0" : dep.MinVersion))
+            if (!depMod.IsEnabled)
             {
-                _logger.Warning("Dependency {DepId} version {DepVersion} does not satisfy required range {Range} for mod {ModId}", dep.Id, depMod.Version, dep.MinVersion, mod.Id);
+                failureReason = $"Dependency '{depMod.Name}' must be enabled before '{mod.Name}'.";
+                _logger.Warning(failureReason);
                 return false;
             }
+
+            var requiredRange = string.IsNullOrWhiteSpace(dep.MinVersion) ? ">=0.0.0" : dep.MinVersion;
+            if (!VersionService.SatisfiesRangeLegacy(depMod.Version ?? "1.0.0", requiredRange))
+            {
+                failureReason = $"Dependency '{depMod.Name}' version {depMod.Version} does not satisfy requirement {requiredRange}.";
+                _logger.Warning(failureReason);
+                return false;
+            }
+        }
+
+        // Run full dependency resolver to detect cycles/missing graph state
+        var resolution = _dependencyResolver.ResolveDependencies(allMods);
+
+        var missing = resolution.MissingDependencies.FirstOrDefault(md => md.ModId.Equals(mod.Id, StringComparison.OrdinalIgnoreCase));
+        if (missing != null)
+        {
+            failureReason = $"Missing dependency '{missing.DependencyId}' for '{mod.Name}'.";
+            return false;
+        }
+
+        var conflict = resolution.VersionConflicts.FirstOrDefault(vc => vc.ModId.Equals(mod.Id, StringComparison.OrdinalIgnoreCase));
+        if (conflict != null)
+        {
+            failureReason = $"Dependency '{conflict.DependencyName}' version {conflict.InstalledVersion} violates required {conflict.RequiredVersion}.";
+            return false;
+        }
+
+        var cycle = resolution.CircularDependencies.FirstOrDefault(cd => cd.ModIds.Contains(mod.Id));
+        if (cycle != null)
+        {
+            failureReason = $"Circular dependency detected: {cycle.CycleDescription}.";
+            return false;
         }
 
         return true;
@@ -88,7 +135,11 @@ public class ModRepository : IModRepository
         try
         {
             var modsCollection = _database.GetCollection<ModInfo>("mods");
-            return modsCollection.FindAll().ToList();
+            return modsCollection
+                .FindAll()
+                .OrderBy(m => m.LoadOrder)
+                .ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -133,7 +184,27 @@ public class ModRepository : IModRepository
             var modsCollection = _database.GetCollection<ModInfo>("mods");
             var zipFileName = Path.GetFileNameWithoutExtension(zipPath);
 
-            var result = await _installationService.InstallFromZipAsync(zipPath);
+            var result = await _installationService.InstallFromZipAsync(
+                zipPath,
+                overwrite: false,
+                async manifest =>
+                {
+                    var tempModInfo = new ModInfo
+                    {
+                        Id = manifest.Id,
+                        Name = manifest.Name,
+                        Version = manifest.Version,
+                        Dependencies = manifest.Dependencies ?? new List<ModDependency>(),
+                        IsEnabled = true
+                    };
+
+                    var isValid = ValidateDependencies(tempModInfo, out var failureReason);
+                    return await Task.FromResult(new DependencyValidationOutcome
+                    {
+                        Success = isValid,
+                        FailureReason = failureReason
+                    });
+                });
             
             if (!result.Success)
             {
@@ -220,6 +291,17 @@ public class ModRepository : IModRepository
                 return;
             }
 
+            // check if game is running
+            if (OperatingSystem.IsWindows())
+            {
+                var detector = new AskaDetector();
+                if (detector.IsAskaRunning())
+                {
+                    _logger.Warning("Cannot uninstall mod while game is running: {ModId}", modId);
+                    throw new InvalidOperationException("Cannot uninstall mods while ASKA is running.");
+                }
+            }
+
             // Prevent uninstall if other mods depend on this mod
             var modsCollection = _database.GetCollection<ModInfo>("mods");
             var dependents = modsCollection.Find(m => m.Dependencies != null && m.Dependencies.Any(d => d.Id == modId));
@@ -257,6 +339,17 @@ public class ModRepository : IModRepository
             {
                 _logger.Warning("Mod not found: {ModId}", modId);
                 return;
+            }
+
+            // Check if game is running
+            if (OperatingSystem.IsWindows())
+            {
+                var detector = new AskaDetector();
+                if (detector.IsAskaRunning())
+                {
+                    _logger.Warning("Cannot change mod state while game is running: {ModId}", modId);
+                    throw new InvalidOperationException("Cannot enable/disable mods while ASKA is running.");
+                }
             }
 
             // Dependency validation before enabling
@@ -331,18 +424,18 @@ public class ModRepository : IModRepository
             var mod = GetMod(modId);
             if (mod == null)
             {
-                return false;
+                throw new InvalidOperationException($"Mod '{modId}' is not installed.");
             }
 
-            if (!ValidateDependencies(mod))
+            if (!ValidateDependencies(mod, out var dependencyFailure))
             {
-                return false;
+                throw new InvalidOperationException(dependencyFailure ?? $"Dependencies not satisfied for '{modId}'.");
             }
 
             // Check if main DLL exists
             if (!File.Exists(mod.DllPath))
             {
-                return false;
+                throw new InvalidOperationException($"Mod entry DLL missing: {mod.DllPath}");
             }
 
             // Verify checksum if available
@@ -352,26 +445,90 @@ public class ModRepository : IModRepository
                 using var stream = File.OpenRead(mod.DllPath);
                 var hash = await sha256.ComputeHashAsync(stream);
                 var currentChecksum = Convert.ToHexString(hash).ToLowerInvariant();
-                
                 if (currentChecksum != mod.Checksum.ToLowerInvariant())
                 {
                     _logger.Warning("Checksum mismatch for mod {ModId}", modId);
-                    return false;
+                    throw new InvalidOperationException($"Checksum mismatch for '{modId}'. Expected {mod.Checksum}, got {currentChecksum}.");
                 }
             }
 
             return true;
         }
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to validate mod: {ModId}", modId);
-            return false;
+            throw new InvalidOperationException($"Validation failed for '{modId}': {ex.Message}", ex);
         }
     }
 
-    /// <summary>
-    /// Refreshes the mod database by scanning the plugins directory
-    /// </summary>
+    public Task LogRuntimeErrorAsync(RuntimeError error)
+    {
+        try
+        {
+            var collection = _database.GetCollection<RuntimeError>("errors");
+            collection.Insert(error);
+            _logger.Debug("Logged runtime error: {ErrorId} for mod {ModId}", error.Id, error.ModId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to log runtime error");
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task<IEnumerable<RuntimeError>> GetRuntimeErrorsAsync()
+    {
+        try
+        {
+            var collection = _database.GetCollection<RuntimeError>("errors");
+            var result = collection.FindAll()
+                .OrderByDescending(x => x.Timestamp)
+                .ToList();
+            return Task.FromResult<IEnumerable<RuntimeError>>(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to get runtime errors");
+            return Task.FromResult(Enumerable.Empty<RuntimeError>());
+        }
+    }
+
+    public Task ClearRuntimeErrorsAsync(int keepLast = 0)
+    {
+        try
+        {
+            var collection = _database.GetCollection<RuntimeError>("errors");
+            if (keepLast <= 0)
+            {
+                collection.DeleteAll();
+            }
+            else
+            {
+                var all = collection.FindAll()
+                    .OrderByDescending(x => x.Timestamp)
+                    .ToList();
+                
+                if (all.Count > keepLast)
+                {
+                    var toDelete = all.Skip(keepLast).Select(x => x.Id).ToList();
+                    foreach (var id in toDelete)
+                    {
+                        collection.Delete(id);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to clear runtime errors");
+        }
+        return Task.CompletedTask;
+    }
+
     public async Task RefreshDatabaseAsync()
     {
         try
@@ -379,14 +536,18 @@ public class ModRepository : IModRepository
             var scannedMods = await _scanner.ScanModsAsync(_pluginsPath);
 
             var modsCollection = _database.GetCollection<ModInfo>("mods");
-            
+
             // Clear existing data
             modsCollection.DeleteAll();
 
-            // Add scanned mods
-            foreach (var mod in scannedMods)
+            var orderedMods = scannedMods
+                .OrderBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var index = 0; index < orderedMods.Count; index++)
             {
-                modsCollection.Insert(mod);
+                orderedMods[index].LoadOrder = index;
+                modsCollection.Insert(orderedMods[index]);
             }
 
             _logger.Information("Refreshed mod database with {Count} mods", scannedMods.Count());
@@ -404,28 +565,6 @@ public class ModRepository : IModRepository
     public void RefreshDatabase()
     {
         RefreshDatabaseAsync().GetAwaiter().GetResult();
-    }
-
-    /// <summary>
-    /// Gets backup information for a mod
-    /// </summary>
-    public IEnumerable<string> GetModBackups(string modId)
-    {
-        try
-        {
-            var mod = GetMod(modId);
-            if (mod == null)
-            {
-                return Enumerable.Empty<string>();
-            }
-
-            return _fileOps.GetBackups(mod.DllPath);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to get backups for mod: {ModId}", modId);
-            return Enumerable.Empty<string>();
-        }
     }
 
     /// <summary>

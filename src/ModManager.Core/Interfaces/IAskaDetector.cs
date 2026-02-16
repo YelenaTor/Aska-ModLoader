@@ -19,6 +19,11 @@ public interface IAskaDetector
     /// Gets the BepInEx installation status for an Aska installation
     /// </summary>
     Task<BepInExStatus> GetBepInExStatusAsync(string askaPath);
+
+    /// <summary>
+    /// Checks if the Aska game process is currently running
+    /// </summary>
+    bool IsAskaRunning();
 }
 
 /// <summary>

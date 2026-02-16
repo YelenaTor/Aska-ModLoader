@@ -102,6 +102,19 @@ public class AskaDetector : IAskaDetector
         return status;
     }
 
+    public bool IsAskaRunning()
+    {
+        try
+        {
+            return Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ASKA_EXE_NAME)).Any();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to check if Aska is running");
+            return false;
+        }
+    }
+
     // Legacy async wrappers to satisfy interface
     public Task<bool> ValidateInstallationAsync(string path)
     {

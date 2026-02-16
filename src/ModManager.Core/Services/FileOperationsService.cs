@@ -1,5 +1,8 @@
 using ModManager.Core.Interfaces;
 using Serilog;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 
 namespace ModManager.Core.Services;
 
@@ -10,10 +13,12 @@ public class FileOperationsService
 {
     private readonly ILogger _logger;
     private readonly string _backupPath;
+    private readonly string _askaPath;
 
     public FileOperationsService(ILogger logger, string askaPath)
     {
         _logger = logger;
+        _askaPath = askaPath;
         _backupPath = Path.Combine(askaPath, "BepInEx", ".modmanager", "backups");
         Directory.CreateDirectory(_backupPath);
     }
@@ -193,6 +198,7 @@ public class FileOperationsService
             return Directory.GetFiles(_backupPath, backupPattern)
                 .Select(Path.GetFileName)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex)
@@ -217,6 +223,7 @@ public class FileOperationsService
             var backupFiles = Directory.GetFiles(_backupPath, "*.backup")
                 .Select(Path.GetFileName)
                 .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
                 .GroupBy(x => Path.GetFileNameWithoutExtension(x).Split('.').First())
                 .ToList();
 
@@ -292,6 +299,38 @@ public class FileOperationsService
             _logger.Error(ex, "Failed to copy file: {Source} -> {Destination}", sourcePath, destinationPath);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Executes an action with retry logic
+    /// </summary>
+    public async Task<bool> ExecuteWithRetryAsync(Func<Task<bool>> action, int maxRetries = 3, int delayMs = 500)
+    {
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                if (await action())
+                {
+                    return true;
+                }
+            }
+            catch (IOException ex) when (i < maxRetries - 1)
+            {
+                _logger.Warning(ex, "IO Error, retrying {Attempt}/{Max}", i + 1, maxRetries);
+                await Task.Delay(delayMs);
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if ASKA is running
+    /// </summary>
+    public bool IsGameRunning()
+    {
+        var exeName = "Aska";
+        return Process.GetProcessesByName(exeName).Any();
     }
 
     /// <summary>

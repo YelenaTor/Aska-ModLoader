@@ -51,6 +51,21 @@ public interface IModRepository
     /// Validates mod integrity
     /// </summary>
     Task<bool> ValidateModAsync(string modId);
+
+    /// <summary>
+    /// Logs a runtime error to the repository
+    /// </summary>
+    Task LogRuntimeErrorAsync(RuntimeError error);
+
+    /// <summary>
+    /// Gets all logged runtime errors
+    /// </summary>
+    Task<IEnumerable<RuntimeError>> GetRuntimeErrorsAsync();
+
+    /// <summary>
+    /// Clears runtime errors, optionally keeping only the last N
+    /// </summary>
+    Task ClearRuntimeErrorsAsync(int keepLast = 0);
 }
 
 /// <summary>

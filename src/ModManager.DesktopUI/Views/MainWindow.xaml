@@ -57,151 +57,202 @@
             </Grid>
         </Border>
 
+        <!-- Warning Banner -->
+        <Border Grid.Row="1" 
+                Background="DarkGoldenrod" 
+                Visibility="{Binding IsGameRunning, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Panel.ZIndex="10"
+                VerticalAlignment="Top"
+                Padding="10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <TextBlock Text="⚠" FontSize="16" Foreground="White" Margin="0,0,10,0" />
+                <TextBlock Text="ASKA is currently running. Mod operations are disabled to prevent file corruption." 
+                           Foreground="White" 
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
+
         <!-- Main Content -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="300" />
-            </Grid.ColumnDefinitions>
+        <TabControl Grid.Row="1" Margin="5">
+            <TabItem Header="Mods">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="300" />
+                    </Grid.ColumnDefinitions>
 
-            <!-- Left Panel - Installed Mods -->
-            <Grid Margin="10">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
+                    <!-- Left Panel - Installed Mods -->
+                    <Grid Margin="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                    <TextBlock Text="Installed Mods" 
-                               FontSize="18" 
-                               FontWeight="SemiBold" />
-                    <Button Content="Refresh" 
-                            Padding="8,4"
-                            Margin="10,0,0,0"
-                            Command="{Binding RefreshCommand}" />
-                    <Button Content="Install from ZIP" 
-                            Padding="8,4"
-                            Margin="5,0,0,0"
-                            Command="{Binding InstallFromZipCommand}" />
-                </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBlock Text="Installed Mods" 
+                                       FontSize="18" 
+                                       FontWeight="SemiBold" />
+                            <Button Content="Refresh" 
+                                    Padding="8,4"
+                                    Margin="10,0,0,0"
+                                    Command="{Binding RefreshCommand}" />
+                            <Button Content="Install from ZIP" 
+                                    Padding="8,4"
+                                    Margin="5,0,0,0"
+                                    Command="{Binding InstallFromZipCommand}" />
+                        </StackPanel>
 
-                <DataGrid x:Name="InstalledModsGrid"
-                          Grid.Row="1"
-                          AutoGenerateColumns="False"
-                          CanUserAddRows="False"
-                          CanUserDeleteRows="False"
-                          CanUserReorderColumns="True"
-                          GridLinesVisibility="Horizontal"
-                          HeadersVisibility="Column"
-                          ItemsSource="{Binding InstalledMods}"
-                          SelectedItem="{Binding SelectedMod, Mode=TwoWay}">
-                    <DataGrid.Columns>
-                        <DataGridCheckBoxColumn Header="Enabled" 
-                                                Binding="{Binding IsEnabled, Mode=TwoWay}" />
-                        <DataGridTextColumn Header="Name" 
-                                            Binding="{Binding Name}" 
-                                            IsReadOnly="True" />
-                        <DataGridTextColumn Header="Version" 
-                                            Binding="{Binding Version}" 
-                                            IsReadOnly="True" />
-                        <DataGridTextColumn Header="Author" 
-                                            Binding="{Binding Author}" 
-                                            IsReadOnly="True" />
-                        <DataGridTextColumn Header="Description" 
-                                            Binding="{Binding Description}" 
-                                            Width="*"
-                                            IsReadOnly="True" />
-                    </DataGrid.Columns>
-                </DataGrid>
-            </Grid>
+                        <DataGrid x:Name="InstalledModsGrid"
+                                  Grid.Row="1"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  CanUserReorderColumns="True"
+                                  GridLinesVisibility="Horizontal"
+                                  HeadersVisibility="Column"
+                                  ItemsSource="{Binding InstalledMods}"
+                                  SelectedItem="{Binding SelectedMod, Mode=TwoWay}">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="Enabled" 
+                                                        Binding="{Binding IsEnabled, Mode=TwoWay}" />
+                                <DataGridTextColumn Header="Name" 
+                                                    Binding="{Binding Name}" 
+                                                    IsReadOnly="True" />
+                                <DataGridTextColumn Header="Version" 
+                                                    Binding="{Binding Version}" 
+                                                    IsReadOnly="True" />
+                                <DataGridTextColumn Header="Author" 
+                                                    Binding="{Binding Author}" 
+                                                    IsReadOnly="True" />
+                                <DataGridTextColumn Header="Description" 
+                                                    Binding="{Binding Description}" 
+                                                    Width="*"
+                                                    IsReadOnly="True" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
 
-            <!-- Right Panel - Mod Details -->
-            <Grid Margin="10,0,10,10">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
+                    <!-- Right Panel - Mod Details -->
+                    <Grid Grid.Column="1" Margin="10,0,10,10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                <!-- Mod Actions -->
-                <StackPanel Orientation="Horizontal" 
-                            Grid.Row="0"
-                            Margin="0,0,0,10"
-                            Visibility="{Binding SelectedMod, Converter={StaticResource NullToVisibilityConverter}}">
-                    <Button Content="Enable" 
-                            Padding="8,4"
-                            Margin="0,0,5,0"
-                            Command="{Binding EnableModCommand}" />
-                    <Button Content="Disable" 
-                            Padding="8,4"
-                            Margin="0,0,5,0"
-                            Command="{Binding DisableModCommand}" />
-                    <Button Content="Uninstall" 
-                            Padding="8,4"
-                            Background="IndianRed"
-                            Command="{Binding UninstallModCommand}" />
-                </StackPanel>
+                        <!-- Mod Actions -->
+                        <StackPanel Orientation="Horizontal" 
+                                    Grid.Row="0"
+                                    Margin="0,0,0,10"
+                                    Visibility="{Binding SelectedMod, Converter={StaticResource NullToVisibilityConverter}}">
+                            <Button Content="Enable" 
+                                    Padding="8,4"
+                                    Margin="0,0,5,0"
+                                    Command="{Binding EnableModCommand}" />
+                            <Button Content="Disable" 
+                                    Padding="8,4"
+                                    Margin="0,0,5,0"
+                                    Command="{Binding DisableModCommand}" />
+                            <Button Content="Uninstall" 
+                                    Padding="8,4"
+                                    Background="IndianRed"
+                                    Command="{Binding UninstallModCommand}" />
+                        </StackPanel>
 
-                <!-- Mod Info -->
-                <ScrollViewer Grid.Row="1" 
-                              VerticalScrollBarVisibility="Auto"
-                              Visibility="{Binding SelectedMod, Converter={StaticResource NullToVisibilityConverter}}">
-                    <StackPanel Margin="0,0,0,10">
-                        <TextBlock Text="{Binding SelectedMod.Name}" 
-                                   FontSize="16" 
+                        <!-- Mod Info -->
+                        <ScrollViewer Grid.Row="1" 
+                                      VerticalScrollBarVisibility="Auto"
+                                      Visibility="{Binding SelectedMod, Converter={StaticResource NullToVisibilityConverter}}">
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="{Binding SelectedMod.Name}" 
+                                           FontSize="16" 
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding SelectedMod.Version}" 
+                                           FontSize="14" 
+                                           Foreground="Gray" />
+                                <TextBlock Text="by {Binding SelectedMod.Author}" 
+                                           FontSize="12" 
+                                           Foreground="Gray" />
+                                
+                                <Separator Margin="0,10" />
+                                
+                                <TextBlock Text="Description" 
+                                           FontWeight="SemiBold" 
+                                           Margin="0,0,0,5" />
+                                <TextBlock Text="{Binding SelectedMod.Description}" 
+                                           TextWrapping="Wrap" />
+                                
+                                <Separator Margin="0,10" />
+                                
+                                <TextBlock Text="Dependencies" 
+                                           FontWeight="SemiBold" 
+                                           Margin="0,0,0,5" />
+                                <ItemsControl ItemsSource="{Binding SelectedMod.Dependencies}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="5">
+                                                <TextBlock Text="{Binding Id}" 
+                                                           FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding MinVersion}" 
+                                                           FontSize="12" 
+                                                           Foreground="Gray" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                
+                                <Separator Margin="0,10" />
+                                
+                                <TextBlock Text="Installation Info" 
+                                           FontWeight="SemiBold" 
+                                           Margin="0,0,0,5" />
+                                <TextBlock Text="Path: {Binding SelectedMod.InstallPath}" 
+                                           FontSize="12" 
+                                           Foreground="Gray" />
+                                <TextBlock Text="Installed: {Binding SelectedMod.InstallDate}" 
+                                           FontSize="12" 
+                                           Foreground="Gray" />
+                                <TextBlock Text="Updated: {Binding SelectedMod.LastUpdated}" 
+                                           FontSize="12" 
+                                           Foreground="Gray" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            
+            <TabItem Header="Diagnostics">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <TextBlock Text="Runtime Errors" 
+                                   FontSize="18" 
                                    FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding SelectedMod.Version}" 
-                                   FontSize="14" 
-                                   Foreground="Gray" />
-                        <TextBlock Text="by {Binding SelectedMod.Author}" 
-                                   FontSize="12" 
-                                   Foreground="Gray" />
-                        
-                        <Separator Margin="0,10" />
-                        
-                        <TextBlock Text="Description" 
-                                   FontWeight="SemiBold" 
-                                   Margin="0,0,0,5" />
-                        <TextBlock Text="{Binding SelectedMod.Description}" 
-                                   TextWrapping="Wrap" />
-                        
-                        <Separator Margin="0,10" />
-                        
-                        <TextBlock Text="Dependencies" 
-                                   FontWeight="SemiBold" 
-                                   Margin="0,0,0,5" />
-                        <ItemsControl ItemsSource="{Binding SelectedMod.Dependencies}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Margin="5">
-                                        <TextBlock Text="{Binding Id}" 
-                                                   FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding MinVersion}" 
-                                                   FontSize="12" 
-                                                   Foreground="Gray" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        
-                        <Separator Margin="0,10" />
-                        
-                        <TextBlock Text="Installation Info" 
-                                   FontWeight="SemiBold" 
-                                   Margin="0,0,0,5" />
-                        <TextBlock Text="Path: {Binding SelectedMod.InstallPath}" 
-                                   FontSize="12" 
-                                   Foreground="Gray" />
-                        <TextBlock Text="Installed: {Binding SelectedMod.InstallDate}" 
-                                   FontSize="12" 
-                                   Foreground="Gray" />
-                        <TextBlock Text="Updated: {Binding SelectedMod.LastUpdated}" 
-                                   FontSize="12" 
-                                   Foreground="Gray" />
+                        <Button Content="Copy Diagnostic Bundle" 
+                                Padding="8,4"
+                                Margin="10,0,0,0"
+                                Command="{Binding CopyDiagnosticsCommand}" />
                     </StackPanel>
-                </ScrollViewer>
-            </Grid>
-        </Grid>
+                    
+                    <DataGrid Grid.Row="1" 
+                              ItemsSource="{Binding RuntimeErrors}" 
+                              AutoGenerateColumns="False" 
+                              IsReadOnly="True"
+                              CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Timestamp" Binding="{Binding Timestamp, StringFormat='{}{0:HH:mm:ss}'}" Width="100" />
+                            <DataGridTextColumn Header="Mod" Binding="{Binding ModName}" Width="150" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
 
         <!-- Status Bar -->
         <StatusBar Grid.Row="2" 

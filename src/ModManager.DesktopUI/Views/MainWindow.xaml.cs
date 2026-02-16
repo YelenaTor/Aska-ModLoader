@@ -41,7 +41,7 @@ namespace ModManager.DesktopUI.Views
                     var modRepository = new ModManager.Core.Services.ModRepository(logger, gamePath);
 
                     // Create facade with injected dependencies
-                    facade = new RealModManagerFacade(modRepository, logger);
+                    facade = new RealModManagerFacade(modRepository, logger, gamePath);
                 }
 
                 var viewModel = new MainWindowViewModel(facade, gamePathService, logger);

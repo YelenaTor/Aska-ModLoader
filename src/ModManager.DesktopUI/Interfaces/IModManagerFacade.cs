@@ -1,4 +1,7 @@
+using ModManager.Core.Models;
 using ModManager.DesktopUI.Models;
+using System;
+using System.Collections.Generic;
 
 namespace ModManager.DesktopUI.Interfaces;
 
@@ -61,4 +64,48 @@ public interface IModManagerFacade
     /// Sets the status message (for error handling)
     /// </summary>
     void SetStatusMessage(string message);
+
+    /// <summary>
+    /// Gets all available profiles
+    /// </summary>
+    IEnumerable<string> GetProfiles();
+
+    /// <summary>
+    /// Switches to a profile by name
+    /// </summary>
+    FacadeOperationResult SwitchToProfile(string profileName);
+
+    /// <summary>
+    /// Saves current enabled mods as a new profile
+    /// </summary>
+    FacadeOperationResult SaveCurrentAsProfile(string profileName);
+
+    /// <summary>
+    /// Gets the currently active profile name
+    /// </summary>
+    string? GetActiveProfile();
+
+    /// <summary>
+    /// Gets the last runtime error reported by the crash diagnostics pipeline
+    /// </summary>
+    string? GetLastRuntimeError();
+
+    /// <summary>
+    /// Raised when the crash diagnostics service publishes a new error line
+    /// </summary>
+    event EventHandler<string?>? CrashLogUpdated;
+    /// <summary>
+    /// Checks if the game is currently running
+    /// </summary>
+    bool IsGameRunning();
+
+    /// <summary>
+    /// Gets all logged runtime errors
+    /// </summary>
+    IEnumerable<RuntimeError> GetRuntimeErrors();
+
+    /// <summary>
+    /// Generates a diagnostic bundle (JSON string) for support
+    /// </summary>
+    string GenerateDiagnosticBundle();
 }

@@ -7,6 +7,7 @@ using ModManager.DesktopUI.Interfaces;
 using ModManager.DesktopUI.Models;
 using ModManager.DesktopUI.Services;
 using Serilog;
+using System;
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Forms;
@@ -44,30 +45,94 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private bool isRuntimeReady;
 
-    public ICommand RefreshCommand { get; }
-    public ICommand InstallFromZipCommand { get; }
-    public ICommand EnableModCommand { get; }
-    public ICommand DisableModCommand { get; }
-    public ICommand UninstallModCommand { get; }
-    public ICommand ConfigureGamePathCommand { get; }
-    public ICommand InstallBepInExCommand { get; }
+    [ObservableProperty]
+    private string? lastRuntimeError;
+
+    [ObservableProperty]
+    private bool isGameRunning;
+
+    public ObservableCollection<RuntimeError> RuntimeErrors { get; } = new();
+
+    private readonly System.Windows.Threading.DispatcherTimer _gameStatusTimer;
+
+    public ObservableCollection<string> Profiles { get; } = new();
+
+    [ObservableProperty]
+    private string? selectedProfile;
+
+    public IRelayCommand RefreshCommand { get; }
+    public IRelayCommand InstallFromZipCommand { get; }
+    public IRelayCommand EnableModCommand { get; }
+    public IRelayCommand DisableModCommand { get; }
+    public IRelayCommand UninstallModCommand { get; }
+    public IRelayCommand ConfigureGamePathCommand { get; }
+    public IRelayCommand InstallBepInExCommand { get; }
+    public IRelayCommand SaveProfileCommand { get; }
+    public IRelayCommand CopyDiagnosticsCommand { get; }
 
     public MainWindowViewModel(IModManagerFacade? modManagerFacade, IGamePathService gamePathService, ILogger logger)
     {
-        _modManagerFacade = modManagerFacade;
+        SetFacade(modManagerFacade);
         _gamePathService = gamePathService;
         _logger = logger;
-
         // Initialize commands (will become IAsyncRelayCommand when real async arrives)
         RefreshCommand = new RelayCommand(RefreshMods);
         InstallFromZipCommand = new RelayCommand(InstallFromZip);
         EnableModCommand = new RelayCommand(EnableSelectedMod, CanEnableSelectedMod);
         DisableModCommand = new RelayCommand(DisableSelectedMod, CanDisableSelectedMod);
         UninstallModCommand = new RelayCommand(UninstallSelectedMod, CanUninstallSelectedMod);
+        SaveProfileCommand = new RelayCommand<string>(SaveProfile);
         ConfigureGamePathCommand = new RelayCommand(ConfigureGamePath);
         InstallBepInExCommand = new RelayCommand(InstallBepInEx, CanInstallBepInEx);
+        CopyDiagnosticsCommand = new RelayCommand(CopyDiagnostics);
+
+        SetFacade(modManagerFacade);
+        _gamePathService = gamePathService;
+        _logger = logger;
 
         InitializeGamePath();
+        if (_modManagerFacade != null)
+        {
+            LastRuntimeError = _modManagerFacade.GetLastRuntimeError();
+            LoadRuntimeErrors();
+        }
+
+        // Setup timer to check game status
+        _gameStatusTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _gameStatusTimer.Tick += (s, e) => CheckGameStatus();
+        _gameStatusTimer.Start();
+    }
+
+    private void SetFacade(IModManagerFacade? facade)
+    {
+        if (_modManagerFacade != null)
+        {
+            _modManagerFacade.CrashLogUpdated -= OnCrashLogUpdated;
+        }
+
+        _modManagerFacade = facade;
+
+        if (_modManagerFacade != null)
+        {
+            _modManagerFacade.CrashLogUpdated += (s, e) =>
+            {
+                LastRuntimeError = e;
+                LoadRuntimeErrors();
+            };
+            LastRuntimeError = _modManagerFacade.GetLastRuntimeError();
+        }
+        else
+        {
+            LastRuntimeError = null;
+        }
+    }
+
+    private void OnCrashLogUpdated(object? sender, string? message)
+    {
+        LastRuntimeError = message;
     }
 
     private void InitializeGamePath()
@@ -89,6 +154,7 @@ public partial class MainWindowViewModel : ObservableObject
             StatusMessage = $"Game path: {resolvedPath}";
             ValidateRuntime(resolvedPath);
             LoadInstalledMods();
+            LoadProfiles();
             UpdateStatus();
         }
         catch (Exception ex)
@@ -185,11 +251,12 @@ public partial class MainWindowViewModel : ObservableObject
             IsGamePathConfigured = true;
 
             // Rebuild facade with the newly configured path
-            _modManagerFacade = BuildRealFacade(selectedPath);
+            SetFacade(BuildRealFacade(selectedPath));
 
             // Reload mods with the valid path
             ValidateRuntime(selectedPath);
             LoadInstalledMods();
+            LoadProfiles();
             UpdateStatus();
         }
         catch (Exception ex)
@@ -273,6 +340,12 @@ public partial class MainWindowViewModel : ObservableObject
         if (!IsRuntimeReady)
         {
             StatusMessage = "BepInEx not installed. Please install before adding mods.";
+            return;
+        }
+
+        if (IsGameRunning)
+        {
+            StatusMessage = "Cannot install mods while ASKA is running.";
             return;
         }
         var dialog = new Microsoft.Win32.OpenFileDialog
@@ -386,6 +459,9 @@ public partial class MainWindowViewModel : ObservableObject
             {
                 InstalledMods.Remove(SelectedMod);
                 SelectedMod = null;
+                LoadInstalledMods();
+                UpdateStatus();
+                LoadProfiles();
             }
             StatusMessage = result.Message;
         }
@@ -393,17 +469,130 @@ public partial class MainWindowViewModel : ObservableObject
 
     private bool CanEnableSelectedMod()
     {
-        return SelectedMod != null && !SelectedMod.IsEnabled && IsRuntimeReady;
+        return SelectedMod != null && !SelectedMod.IsEnabled && IsRuntimeReady && !IsGameRunning;
     }
 
     private bool CanDisableSelectedMod()
     {
-        return SelectedMod != null && SelectedMod.IsEnabled && IsRuntimeReady;
+        return SelectedMod != null && SelectedMod.IsEnabled && IsRuntimeReady && !IsGameRunning;
     }
 
     private bool CanUninstallSelectedMod()
     {
-        return SelectedMod != null && IsRuntimeReady;
+        return SelectedMod != null && IsRuntimeReady && !IsGameRunning;
+    }
+
+    private void CheckGameStatus()
+    {
+        if (_modManagerFacade == null) return;
+
+        bool currentlyRunning = _modManagerFacade.IsGameRunning();
+        if (IsGameRunning != currentlyRunning)
+        {
+            IsGameRunning = currentlyRunning;
+            if (IsGameRunning)
+            {
+                StatusMessage = "ASKA is running. Mod operations are disabled.";
+            }
+            else
+            {
+                StatusMessage = "Ready";
+            }
+
+            // Refresh all command states
+            ((RelayCommand)EnableModCommand).NotifyCanExecuteChanged();
+            ((RelayCommand)DisableModCommand).NotifyCanExecuteChanged();
+            ((RelayCommand)UninstallModCommand).NotifyCanExecuteChanged();
+            ((RelayCommand)InstallFromZipCommand).NotifyCanExecuteChanged();
+        }
+    }
+
+    private void LoadRuntimeErrors()
+    {
+        if (_modManagerFacade == null) return;
+        
+        App.Current.Dispatcher.Invoke(() =>
+        {
+            var errors = _modManagerFacade.GetRuntimeErrors();
+            RuntimeErrors.Clear();
+            foreach (var error in errors)
+            {
+                RuntimeErrors.Add(error);
+            }
+        });
+    }
+
+    private void SaveProfile(string profileName)
+    {
+        try
+        {
+            if (_modManagerFacade == null || string.IsNullOrWhiteSpace(profileName)) return;
+
+            var result = _modManagerFacade.SaveCurrentAsProfile(profileName);
+            StatusMessage = result.Message;
+            if (result.Success)
+            {
+                LoadProfiles();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to save profile: {ProfileName}", profileName);
+            StatusMessage = $"Failed to save profile: {ex.Message}";
+        }
+    }
+
+    private void CopyDiagnostics()
+    {
+        try
+        {
+            if (_modManagerFacade == null)
+            {
+                StatusMessage = "Cannot generate diagnostics - mod manager not initialized";
+                return;
+            }
+
+            StatusMessage = "Generating diagnostic bundle...";
+            var bundle = _modManagerFacade.GenerateDiagnosticBundle();
+            
+            if (string.IsNullOrEmpty(bundle))
+            {
+                StatusMessage = "Failed to generate diagnostic bundle";
+                return;
+            }
+
+            // Copy to clipboard
+            System.Windows.Clipboard.SetText(bundle);
+            StatusMessage = "Diagnostic bundle copied to clipboard";
+            
+            _logger.Information("Diagnostic bundle generated and copied to clipboard");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error generating diagnostics: {ex.Message}";
+            _logger.Error(ex, "Failed to generate diagnostics");
+        }
+    }
+
+    private void LoadProfiles()
+    {
+        try
+        {
+            if (_modManagerFacade == null) return;
+
+            var profiles = _modManagerFacade.GetProfiles();
+            Profiles.Clear();
+            foreach (var profile in profiles)
+            {
+                Profiles.Add(profile);
+            }
+
+            SelectedProfile = _modManagerFacade.GetActiveProfile();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to load profiles");
+        }
     }
 
     private void UpdateStatus()
@@ -420,7 +609,7 @@ public partial class MainWindowViewModel : ObservableObject
     private IModManagerFacade BuildRealFacade(string gamePath)
     {
         var modRepository = new ModRepository(_logger, gamePath);
-        return new RealModManagerFacade(modRepository, _logger);
+        return new RealModManagerFacade(modRepository, _logger, gamePath);
     }
 
     private void ValidateRuntime(string gamePath)

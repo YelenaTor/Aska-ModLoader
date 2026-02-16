@@ -50,11 +50,39 @@ public class ModScanner
                         if (modFromManifest != null && processedIds.Add(modFromManifest.Id))
                         {
                             mods.Add(modFromManifest);
+                            continue;
                         }
                     }
                     catch (Exception ex)
                     {
                         _logger.Warning(ex, "Failed to load manifest: {Path}", manifestPath);
+                    }
+                }
+
+                // No manifest or manifest failed: try to locate DLLs inside folder
+                var dllCandidates = Directory.GetFiles(dir, "*.dll", SearchOption.TopDirectoryOnly)
+                    .Concat(Directory.GetFiles(dir, "*.dll.disabled", SearchOption.TopDirectoryOnly))
+                    .ToList();
+
+                if (dllCandidates.Count == 0)
+                {
+                    continue;
+                }
+
+                var primaryDll = SelectPrimaryDll(dir, dllCandidates);
+                if (!string.IsNullOrEmpty(primaryDll))
+                {
+                    try
+                    {
+                        var analyzed = await AnalyzeModAsync(primaryDll);
+                        if (analyzed != null && processedIds.Add(analyzed.Id))
+                        {
+                            mods.Add(analyzed);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to analyze mod folder {Folder}", dir);
                     }
                 }
             }
@@ -315,15 +343,16 @@ public class ModScanner
             }
 
             // Look for BepInEx dependency attribute
-            var dependencyAttribute = assembly.CustomAttributes
-                .FirstOrDefault(attr => attr.AttributeType.FullName == "BepInEx.BepInDependency");
+            var dependencyAttributes = assembly.CustomAttributes
+                .Where(attr => attr.AttributeType.FullName == "BepInEx.BepInDependency");
 
-            if (dependencyAttribute != null)
+            foreach (var dependencyAttribute in dependencyAttributes)
             {
                 var bepinexVersionArg = dependencyAttribute.ConstructorArguments.FirstOrDefault();
                 if (bepinexVersionArg.Value is string bepinexVersion)
                 {
                     metadata.BepInExVersion = bepinexVersion;
+                    break;
                 }
             }
 
@@ -384,5 +413,53 @@ public class ModScanner
     private bool IsDisabledFile(string filePath)
     {
         return Path.GetExtension(filePath).Equals(".disabled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string? SelectPrimaryDll(string directory, List<string> dllCandidates)
+    {
+        if (dllCandidates.Count == 0)
+        {
+            return null;
+        }
+
+        // Prefer DLL matching directory name
+        var directoryName = Path.GetFileName(directory);
+        var match = dllCandidates.FirstOrDefault(d => Path.GetFileNameWithoutExtension(d).Equals(directoryName, StringComparison.OrdinalIgnoreCase));
+        return match ?? dllCandidates.First();
+    }
+
+    private List<ModDependency> ExtractDependenciesFromAssembly(AssemblyDefinition assembly)
+    {
+        var dependencies = new List<ModDependency>();
+
+        var dependencyAttributes = assembly.CustomAttributes
+            .Where(attr => attr.AttributeType.FullName == "BepInEx.BepInDependency");
+
+        foreach (var attr in dependencyAttributes)
+        {
+            if (attr.ConstructorArguments.Count == 0)
+            {
+                continue;
+            }
+
+            var guid = attr.ConstructorArguments[0].Value as string ?? string.Empty;
+            var versionRange = attr.ConstructorArguments.Count > 1
+                ? attr.ConstructorArguments[1].Value as string ?? ">=0.0.0"
+                : ">=0.0.0";
+
+            if (string.IsNullOrWhiteSpace(guid))
+            {
+                continue;
+            }
+
+            dependencies.Add(new ModDependency
+            {
+                Id = guid,
+                MinVersion = versionRange,
+                Optional = false
+            });
+        }
+
+        return dependencies;
     }
 }

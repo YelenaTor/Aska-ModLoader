@@ -95,7 +95,7 @@ public static class VersionService
 
         try
         {
-            var isSatisfied = range!.Satisfies(nugetVersion);
+            var isSatisfied = range.Satisfies(nugetVersion!);
             return new VersionRangeResult 
             { 
                 IsSatisfied = isSatisfied,

@@ -1,6 +1,7 @@
 using ModManager.Core.Interfaces;
 using Serilog;
 using System.IO;
+using System.Runtime.Versioning;
 using System.Text.Json;
 
 namespace ModManager.Core.Services;
@@ -55,6 +56,7 @@ public class GamePathService : IGamePathService
         }
     }
 
+    [SupportedOSPlatform("windows")]
     public string? DetectGamePath()
     {
         try
@@ -132,7 +134,7 @@ public class GamePathService : IGamePathService
         try
         {
             var directory = Path.GetDirectoryName(_settingsPath);
-            if (!Directory.Exists(directory))
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
             }
@@ -163,6 +165,7 @@ public class GamePathService : IGamePathService
         }
     }
 
+    [SupportedOSPlatform("windows")]
     public string? ResolveGamePath()
     {
         try

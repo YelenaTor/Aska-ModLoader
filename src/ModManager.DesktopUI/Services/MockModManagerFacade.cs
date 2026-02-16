@@ -12,12 +12,14 @@ public class MockModManagerFacade : IModManagerFacade
 {
     private readonly List<ModInfo> _installedMods = new();
     private string _statusMessage = "Ready";
-
     public MockModManagerFacade()
     {
-        // Initialize with sample data for UI testing
         InitializeSampleData();
     }
+
+#pragma warning disable CS0067
+    public event EventHandler<string?>? CrashLogUpdated;
+#pragma warning restore CS0067
 
     public IEnumerable<ModDisplayModel> GetInstalledMods()
     {
@@ -114,6 +116,11 @@ public class MockModManagerFacade : IModManagerFacade
         return _statusMessage;
     }
 
+    public string? GetLastRuntimeError()
+    {
+        return "No runtime errors (Mock)";
+    }
+
     public FacadeOperationResult ValidateModEnable(string modId)
     {
         var mod = _installedMods.FirstOrDefault(m => m.Id == modId);
@@ -151,6 +158,53 @@ public class MockModManagerFacade : IModManagerFacade
     public void SetStatusMessage(string message)
     {
         _statusMessage = message;
+    }
+
+    public IEnumerable<string> GetProfiles()
+    {
+        return new[] { "Default", "Hardcore" };
+    }
+
+    public FacadeOperationResult SwitchToProfile(string profileName)
+    {
+        // Mock switching - just return success
+        _statusMessage = $"Switched to profile: {profileName}";
+        return FacadeOperationResult.SuccessResult(_statusMessage);
+    }
+
+    public FacadeOperationResult SaveCurrentAsProfile(string profileName)
+    {
+        _statusMessage = $"Saved current mods as profile: {profileName}";
+        return FacadeOperationResult.SuccessResult(_statusMessage);
+    }
+
+    public string? GetActiveProfile()
+    {
+        return "Default";
+    }
+
+    public bool IsGameRunning()
+    {
+        return false;
+    }
+
+    public IEnumerable<RuntimeError> GetRuntimeErrors()
+    {
+        return new List<RuntimeError>
+        {
+            new RuntimeError
+            {
+                ModId = "example-mod-1",
+                ModName = "Example Mod 1",
+                Message = "Mock error for testing",
+                Severity = ErrorSeverity.Warning
+            }
+        };
+    }
+
+    public string GenerateDiagnosticBundle()
+    {
+        return "mock-diagnostic-bundle-json";
     }
 
     private ModDisplayModel ConvertToDisplayModel(ModInfo mod)

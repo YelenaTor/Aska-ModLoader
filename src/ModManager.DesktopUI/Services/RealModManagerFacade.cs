@@ -4,6 +4,7 @@ using ModManager.Core.Services;
 using ModManager.DesktopUI.Interfaces;
 using ModManager.DesktopUI.Models;
 using Serilog;
+using System;
 using System.IO;
 using System.Net.Http;
 
@@ -17,14 +18,21 @@ public class RealModManagerFacade : IModManagerFacade
     private readonly IModRepository _modRepository;
     private readonly ILogger _logger;
     private string _statusMessage = "Ready";
+    private readonly CrashDiagnosticsService _crashDiagnostics;
+    private readonly string _askaPath;
 
-    public RealModManagerFacade(IModRepository modRepository, ILogger logger)
+    public event EventHandler<string?>? CrashLogUpdated;
+
+    public RealModManagerFacade(IModRepository modRepository, ILogger logger, string askaPath)
     {
         _modRepository = modRepository;
         _logger = logger;
+        _askaPath = askaPath;
         
         // Log the repository being used (for diagnostics)
         _logger.Information("RealModManagerFacade initialized with repository");
+        _crashDiagnostics = new CrashDiagnosticsService(_logger, _modRepository, askaPath);
+        _crashDiagnostics.LogUpdated += (sender, message) => CrashLogUpdated?.Invoke(this, message);
     }
 
     public IEnumerable<ModDisplayModel> GetInstalledMods()
@@ -83,6 +91,12 @@ public class RealModManagerFacade : IModManagerFacade
             _statusMessage = $"Enabled {modId}";
             return FacadeOperationResult.SuccessResult(_statusMessage);
         }
+        catch (InvalidOperationException ex)
+        {
+            _statusMessage = ex.Message;
+            _logger.Warning(ex, "Dependency gate prevented enabling mod: {ModId}", modId);
+            return FacadeOperationResult.FailureResult(_statusMessage);
+        }
         catch (Exception ex)
         {
             _statusMessage = $"Enable failed: {ex.Message}";
@@ -99,6 +113,12 @@ public class RealModManagerFacade : IModManagerFacade
             _modRepository.SetEnabledAsync(modId, false).GetAwaiter().GetResult();
             _statusMessage = $"Disabled {modId}";
             return FacadeOperationResult.SuccessResult(_statusMessage);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _statusMessage = ex.Message;
+            _logger.Warning(ex, "Failed dependency gate while disabling mod: {ModId}", modId);
+            return FacadeOperationResult.FailureResult(_statusMessage);
         }
         catch (Exception ex)
         {
@@ -147,6 +167,11 @@ public class RealModManagerFacade : IModManagerFacade
         return _statusMessage;
     }
 
+    public string? GetLastRuntimeError()
+    {
+        return _crashDiagnostics.LastRuntimeError;
+    }
+
     public FacadeOperationResult ValidateModEnable(string modId)
     {
         try
@@ -161,6 +186,12 @@ public class RealModManagerFacade : IModManagerFacade
 
             _statusMessage = "Validation succeeded";
             return FacadeOperationResult.SuccessResult(_statusMessage);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _statusMessage = ex.Message;
+            _logger.Warning(ex, "Dependency validation failed for {ModId}", modId);
+            return FacadeOperationResult.FailureResult(_statusMessage);
         }
         catch (Exception ex)
         {
@@ -211,6 +242,86 @@ public class RealModManagerFacade : IModManagerFacade
     public void SetStatusMessage(string message)
     {
         _statusMessage = message;
+    }
+
+    public IEnumerable<string> GetProfiles()
+    {
+        try
+        {
+            // ProfileService is not injected yet, so instantiate locally for now
+            // In a real app, this would be injected
+            var profileService = new ProfileService(_logger, _modRepository, _askaPath);
+            return profileService.GetProfiles().Select(p => p.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to get profiles");
+            return Enumerable.Empty<string>();
+        }
+    }
+
+    public FacadeOperationResult SwitchToProfile(string profileName)
+    {
+        try
+        {
+            var profileService = new ProfileService(_logger, _modRepository, _askaPath);
+            var success = profileService.SwitchToProfileAsync(profileName).GetAwaiter().GetResult();
+            if (success)
+            {
+                _statusMessage = $"Switched to profile: {profileName}";
+                return FacadeOperationResult.SuccessResult(_statusMessage);
+            }
+            else
+            {
+                _statusMessage = $"Failed to switch to profile: {profileName}";
+                return FacadeOperationResult.FailureResult(_statusMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Profile switch failed: {ex.Message}";
+            _logger.Error(ex, "Facade failed to switch to profile: {Profile}", profileName);
+            return FacadeOperationResult.FailureResult(_statusMessage);
+        }
+    }
+
+    public FacadeOperationResult SaveCurrentAsProfile(string profileName)
+    {
+        try
+        {
+            var profileService = new ProfileService(_logger, _modRepository, _askaPath);
+            var success = profileService.SaveCurrentAsProfileAsync(profileName).GetAwaiter().GetResult();
+            if (success)
+            {
+                _statusMessage = $"Saved current mods as profile: {profileName}";
+                return FacadeOperationResult.SuccessResult(_statusMessage);
+            }
+            else
+            {
+                _statusMessage = $"Failed to save profile: {profileName}";
+                return FacadeOperationResult.FailureResult(_statusMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Profile save failed: {ex.Message}";
+            _logger.Error(ex, "Facade failed to save profile: {Profile}", profileName);
+            return FacadeOperationResult.FailureResult(_statusMessage);
+        }
+    }
+
+    public string? GetActiveProfile()
+    {
+        try
+        {
+            var profileService = new ProfileService(_logger, _modRepository, _askaPath);
+            return profileService.GetActiveProfile();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to get active profile");
+            return null;
+        }
     }
 
     private ModDisplayModel ConvertToDisplayModel(ModInfo mod)
@@ -277,5 +388,29 @@ public class RealModManagerFacade : IModManagerFacade
         {
             return version; // Fallback to original if normalization fails
         }
+    }
+    public bool IsGameRunning()
+    {
+        var detector = new AskaDetector();
+        return detector.IsAskaRunning();
+    }
+
+    public IEnumerable<RuntimeError> GetRuntimeErrors()
+    {
+        return _modRepository.GetRuntimeErrorsAsync().GetAwaiter().GetResult();
+    }
+
+    public string GenerateDiagnosticBundle()
+    {
+        var errors = GetRuntimeErrors();
+        var mods = GetInstalledMods();
+        var bundle = new
+        {
+            Timestamp = DateTime.UtcNow,
+            GamePath = _askaPath,
+            Errors = errors,
+            Mods = mods
+        };
+        return System.Text.Json.JsonSerializer.Serialize(bundle, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
     }
 }

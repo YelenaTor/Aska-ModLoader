@@ -15,7 +15,7 @@ public class ModInstallationService
     private readonly ManifestService _manifestService;
     private readonly FileOperationsService _fileOps;
     private readonly string _pluginsPath;
-    private readonly string _tempPath;
+    private readonly string _tempRoot;
 
     public ModInstallationService(
         ILogger logger, 
@@ -27,17 +27,27 @@ public class ModInstallationService
         _manifestService = manifestService;
         _fileOps = fileOps;
         _pluginsPath = Path.Combine(askaPath, "BepInEx", "plugins");
-        _tempPath = Path.Combine(Path.GetTempPath(), "ModManager", Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_tempPath);
+        _tempRoot = Path.Combine(Path.GetTempPath(), "ModManager", "InstallSessions");
+        Directory.CreateDirectory(_tempRoot);
     }
 
     /// <summary>
     /// Installs a mod from a ZIP file
     /// </summary>
-    public async Task<InstallationResult> InstallFromZipAsync(string zipPath, bool overwrite = false)
+    public async Task<InstallationResult> InstallFromZipAsync(
+        string zipPath,
+        bool overwrite = false,
+        Func<ModManifest, Task<DependencyValidationOutcome>>? dependencyValidator = null)
     {
         var result = new InstallationResult();
+        var sessionTempPath = Path.Combine(_tempRoot, Guid.NewGuid().ToString());
+        Directory.CreateDirectory(sessionTempPath);
+        var stagingPath = Path.Combine(sessionTempPath, "staging");
+        Directory.CreateDirectory(stagingPath);
+        string? backupPath = null;
+        var modPath = string.Empty;
 
+        ModManifest? manifest = null;
         try
         {
             if (!File.Exists(zipPath))
@@ -46,10 +56,16 @@ public class ModInstallationService
                 return result;
             }
 
+            if (_fileOps.IsGameRunning())
+            {
+                result.AddError("Cannot install mods while ASKA is running. Please close the game and try again.");
+                return result;
+            }
+
             _logger.Information("Starting mod installation from: {ZipPath}", zipPath);
 
             // Extract ZIP to temporary directory
-            var extractResult = ExtractZip(zipPath);
+            var extractResult = ExtractZip(zipPath, sessionTempPath);
             if (!extractResult.Success)
             {
                 result.AddErrors(extractResult.Errors);
@@ -64,7 +80,7 @@ public class ModInstallationService
                 return result;
             }
 
-            var manifest = manifestResult.Manifest;
+            manifest = manifestResult.Manifest;
 
             if (manifest == null || string.IsNullOrWhiteSpace(manifest.Id))
             {
@@ -78,8 +94,19 @@ public class ModInstallationService
                 return result;
             }
 
+            // Validate dependencies before touching plugins
+            if (dependencyValidator != null)
+            {
+                var dependencyOutcome = await dependencyValidator(manifest);
+                if (!dependencyOutcome.Success)
+                {
+                    result.AddError(dependencyOutcome.FailureReason ?? "Dependency validation failed");
+                    return result;
+                }
+            }
+
             // Check if mod already exists
-            var modPath = Path.Combine(_pluginsPath, manifest.Id);
+            modPath = Path.Combine(_pluginsPath, manifest.Id);
             if (Directory.Exists(modPath))
             {
                 if (!overwrite)
@@ -89,7 +116,7 @@ public class ModInstallationService
                 }
 
                 _logger.Information("Overwriting existing mod: {ModId}", manifest.Id);
-                BackupExistingMod(modPath);
+                backupPath = BackupExistingMod(modPath);
             }
 
             // Ensure entry is part of files list
@@ -107,24 +134,26 @@ public class ModInstallationService
             }
 
             // Install the mod
-            var installResult = await InstallModFilesAsync(extractResult.ExtractedPath!, manifest);
+            var stagedModPath = Path.Combine(stagingPath, manifest.Id);
+            var installResult = await InstallModFilesAsync(extractResult.ExtractedPath!, manifest, stagedModPath);
             if (!installResult.Success)
             {
                 result.AddErrors(installResult.Errors);
-                // Roll back any partially created mod folder
-                if (Directory.Exists(modPath))
-                {
-                    try
-                    {
-                        Directory.Delete(modPath, true);
-                        _logger.Warning("Rolled back partial install for {ModId}", manifest.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Failed to roll back partial install for {ModId}", manifest.Id);
-                    }
-                }
                 return result;
+            }
+
+            // Move staged install into plugins directory
+            if (Directory.Exists(modPath))
+            {
+                Directory.Delete(modPath, true);
+            }
+
+            Directory.Move(stagedModPath, modPath);
+
+            // Remove backup snapshot after success
+            if (!string.IsNullOrEmpty(backupPath) && Directory.Exists(backupPath))
+            {
+                Directory.Delete(backupPath, true);
             }
 
             result.Success = true;
@@ -137,20 +166,72 @@ public class ModInstallationService
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to install mod from ZIP: {ZipPath}", zipPath);
-            result.AddError($"Installation failed: {ex.Message}");
+            
+            string errorDetail = ex switch
+            {
+                IOException ioEx when _fileOps.IsGameRunning() => "The game is running and locking mod files. Please close ASKA.",
+                IOException ioEx => $"File system error: {ioEx.Message}. Check if any files are locked.",
+                UnauthorizedAccessException => "Access denied. Try running the manager as Administrator.",
+                _ => ex.Message
+            };
+
+            result.AddError($"Installation failed: {errorDetail}");
+
+            // Roll back staged install
+            if (!string.IsNullOrEmpty(modPath) && Directory.Exists(modPath))
+            {
+                try
+                {
+                    Directory.Delete(modPath, true);
+                }
+                catch (Exception deleteEx)
+                {
+                    _logger.Warning(deleteEx, "Failed to delete partial install at {Path}", modPath);
+                }
+            }
+
+            var stagedModPath = (manifest != null)
+                ? Path.Combine(stagingPath, manifest.Id)
+                : Path.Combine(stagingPath, "unknown");
+            if (!string.IsNullOrEmpty(stagedModPath) && Directory.Exists(stagedModPath))
+            {
+                try
+                {
+                    Directory.Delete(stagedModPath, true);
+                }
+                catch (Exception deleteEx)
+                {
+                    _logger.Warning(deleteEx, "Failed to delete staged install at {Path}", stagedModPath);
+                }
+            }
+
+            // Restore backup if we created one
+            if (!string.IsNullOrEmpty(backupPath) && Directory.Exists(backupPath))
+            {
+                try
+                {
+                    Directory.Move(backupPath, modPath);
+                    _logger.Information("Restored backup for {ModId}", manifest?.Id ?? "unknown");
+                }
+                catch (Exception restoreEx)
+                {
+                    _logger.Warning(restoreEx, "Failed to restore backup for {ModId}", manifest?.Id ?? "unknown");
+                }
+            }
+
             return result;
         }
         finally
         {
             // Clean up temporary files
-            await CleanupTempFilesAsync();
+            CleanupSessionTemp(sessionTempPath);
         }
     }
 
     /// <summary>
     /// Extracts a ZIP file to temporary directory
     /// </summary>
-    private ExtractionResult ExtractZip(string zipPath)
+    private ExtractionResult ExtractZip(string zipPath, string sessionTempPath)
     {
         var result = new ExtractionResult();
 
@@ -169,7 +250,7 @@ public class ModInstallationService
             }
 
             // Extract files
-            var extractPath = Path.Combine(_tempPath, "extracted");
+            var extractPath = Path.Combine(sessionTempPath, "extracted");
             Directory.CreateDirectory(extractPath);
 
             foreach (var entry in entries)
@@ -291,20 +372,19 @@ public class ModInstallationService
     /// <summary>
     /// Installs mod files to plugins directory
     /// </summary>
-    private async Task<InstallationResult> InstallModFilesAsync(string extractedPath, ModManifest manifest)
+    private async Task<InstallationResult> InstallModFilesAsync(string extractedPath, ModManifest manifest, string targetPath)
     {
         var result = new InstallationResult();
 
         try
         {
-            var modPath = Path.Combine(_pluginsPath, manifest.Id);
-            Directory.CreateDirectory(modPath);
+            Directory.CreateDirectory(targetPath);
 
             // Copy all files from manifest
             foreach (var file in manifest.Files)
             {
                 var sourcePath = Path.Combine(extractedPath, file);
-                var destinationPath = Path.Combine(modPath, file);
+                var destinationPath = Path.Combine(targetPath, file);
 
                 if (File.Exists(sourcePath))
                 {
@@ -321,7 +401,7 @@ public class ModInstallationService
             }
 
             // Save manifest
-            var manifestPath = Path.Combine(modPath, "manifest.json");
+            var manifestPath = Path.Combine(targetPath, "manifest.json");
             var manifestSaved = await _manifestService.SaveManifestAsync(manifest, manifestPath);
             if (!manifestSaved)
             {
@@ -342,7 +422,7 @@ public class ModInstallationService
     /// <summary>
     /// Creates backup of existing mod
     /// </summary>
-    private void BackupExistingMod(string modPath)
+    private string? BackupExistingMod(string modPath)
     {
         try
         {
@@ -352,10 +432,12 @@ public class ModInstallationService
                 Directory.Move(modPath, backupPath);
                 _logger.Information("Backed up existing mod to: {BackupPath}", backupPath);
             }
+            return backupPath;
         }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to backup existing mod: {ModPath}", modPath);
+            return null;
         }
     }
 
@@ -429,27 +511,20 @@ public class ModInstallationService
     /// <summary>
     /// Cleans up temporary files
     /// </summary>
-    private void CleanupTempFiles()
+    private void CleanupSessionTemp(string sessionTempPath)
     {
         try
         {
-            if (Directory.Exists(_tempPath))
+            if (Directory.Exists(sessionTempPath))
             {
-                Directory.Delete(_tempPath, true);
-                _logger.Debug("Cleaned up temporary files: {Path}", _tempPath);
+                Directory.Delete(sessionTempPath, true);
+                _logger.Debug("Cleaned up temporary files: {Path}", sessionTempPath);
             }
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to cleanup temporary files");
+            _logger.Warning(ex, "Failed to cleanup temporary files at {Path}", sessionTempPath);
         }
-    }
-
-    // Legacy async wrapper for callers expecting async
-    private Task CleanupTempFilesAsync()
-    {
-        CleanupTempFiles();
-        return Task.CompletedTask;
     }
 }
 
