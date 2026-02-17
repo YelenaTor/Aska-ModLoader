@@ -11,38 +11,38 @@ Aska Mod Manager provides a safe, modern, and reliable way to discover, install,
 
 ---
 
-## ✨ Features
+## [ Features ]
 
-### 🚀 Core Management
+### [ Core Management ]
 - **One-Click Install**: Install mods directly from Thunderstore or local ZIP files.
 - **Smart Dependencies**: Automatically resolves and installs all required dependencies recursively.
 - **Safe Management**: Enable, disable, or uninstall mods without breaking your game.
 - **Update Tracking**: Automatically checks for updates and notifies you of new versions.
 
-### 🛡️ Safety & Stability
+### [ Safety & Stability ]
 - **Crash Rollback**: Detects boot loops and offers to disable the problematic mod automatically.
 - **Runtime Validation**: Verifies BepInEx integrity and repairs critical files like `0Harmony.dll`.
 - **Conflict Detection**: Warns you about known incompatibilities between mods.
 - **Atomic Operations**: Installations are transactional—no partial or corrupted installs.
 
-### 🎮 improved Experience
+### [ improved Experience ]
 - **Game Launcher**: Launch ASKA directly with optional "Close on Launch" behavior.
 - **Diagnostics**: Built-in log viewer and "Copy Diagnostic Bundle" for easy support.
 - **Modern UI**: Clean, dark-themed interface powered by MahApps.Metro.
 
 ---
 
-## 📦 Installation
+## [ Installation ]
 
 1. **Download**: Grab the latest release from the [Releases page](https://github.com/YelenaTor/Aska-ModLoader/releases).
 2. **Extract**: Unzip the contents to a **dedicated folder** (e.g., `C:\AskaModManager`).
-   > ⚠️ **IMPORTANT**: Do NOT install inside the game folder or `BepInEx` folder.
+   > **IMPORTANT**: Do NOT install inside the game folder or `BepInEx` folder.
 3. **Run**: Launch `ModManager.DesktopUI.exe`.
 4. **Setup**: Point the manager to your ASKA installation directory when prompted.
 
 ---
 
-## 🛠️ Building from Source
+## [ Building from Source ]
 
 ### Prerequisites
 - Windows 10/11
@@ -59,7 +59,7 @@ dotnet run --project src/ModManager.DesktopUI/ModManager.DesktopUI.csproj
 
 ---
 
-## 🗺️ Roadmap
+## [ Roadmap ]
 
 - [x] **Phase 1**: Production Hardening (Atomic installs, Race safety)
 - [x] **Phase 2**: Observability (Error tracking, Diagnostics)
@@ -72,15 +72,15 @@ See [roadmap.md](roadmap.md) for detailed progress.
 
 ---
 
-## 🤝 Contributing
+## [ Contributing ]
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started on the `master` branch.
 
-## 📄 License
+## [ License ]
 
 This project is licensed under the [BSD 3-Clause License](LICENSE).
 
-## 💖 Acknowledgments
+## [ Acknowledgments ]
 
 - **BepInEx Team** for the incredible modding framework.
 - **Thunderstore** for the API and hosting.

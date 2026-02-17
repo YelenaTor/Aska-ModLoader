@@ -7,7 +7,7 @@ Thank you for your interest in contributing! We want to make it as easy and tran
 - Submitting a fix
 - Proposing new features
 
-## 🚀 Getting Started
+## [ Getting Started ]
 
 ### Prerequisites
 - **.NET 8.0 SDK**
@@ -24,9 +24,9 @@ Thank you for your interest in contributing! We want to make it as easy and tran
    dotnet build src/ModManager.DesktopUI
    ```
 
-##  workflow
+## [ Workflow ]
 
-1. Create a feature branch from `main`:
+1. Create a feature branch from `master`:
    ```bash
    git checkout -b feature/amazing-feature
    ```
@@ -35,15 +35,15 @@ Thank you for your interest in contributing! We want to make it as easy and tran
 4. Commit your changes using descriptive messages.
    > We follow [Conventional Commits](https://www.conventionalcommits.org/).  
    > Example: `feat: add support for Thunderstore v2 API`
-5. Push to your fork and submit a Pull Request.
+5. Push to your fork and submit a Pull Request to the `master` branch.
 
-## 📂 Project Structure
+## [ Project Structure ]
 
 - **`src/ModManager.Core`**: The brain. Contains all business logic, services, and models.
 - **`src/ModManager.DesktopUI`**: The face. WPF application using MVVM and MahApps.Metro.
 - **`src/ModManager.BepInExPlugin`**: In-game hook (placeholder/wip).
 
-## 🐛 Reporting Bugs
+## [ Reporting Bugs ]
 
 Bugs are tracked as GitHub issues. When opening an issue, please include:
 - A clear title and description.
@@ -51,10 +51,10 @@ Bugs are tracked as GitHub issues. When opening an issue, please include:
 - Expected vs. actual behavior.
 - **Log files** (from `AppData/Roaming/AskaModManager/logs` or the "Diagnostics" tab).
 
-## 💡 Feature Requests
+## [ Feature Requests ]
 
 We love new ideas! Please open an issue to discuss your idea before implementing it. This saves time and ensures alignment with the project roadmap.
 
-## 📜 License
+## [ License ]
 
 By contributing, you agree that your contributions will be licensed under its [BSD 3-Clause License](LICENSE).
