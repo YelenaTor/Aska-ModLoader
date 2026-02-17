@@ -227,6 +227,9 @@ public class ModScanner
                 Dependencies = manifest.Dependencies,
                 Source = manifest.Source,
                 Checksum = manifest.Checksum,
+                IncompatibleWith = manifest.IncompatibleWith,
+                LoadAfter = manifest.LoadAfter,
+                LoadBefore = manifest.LoadBefore,
                 InstallPath = Path.GetDirectoryName(manifestPath) ?? string.Empty,
                 InstallDate = File.GetCreationTime(manifestPath),
                 LastUpdated = File.GetLastWriteTime(manifestPath),
@@ -295,6 +298,9 @@ public class ModScanner
                 modInfo.Dependencies = manifest.Dependencies;
                 modInfo.Source = manifest.Source;
                 modInfo.Checksum = manifest.Checksum ?? modInfo.Checksum;
+                modInfo.IncompatibleWith = manifest.IncompatibleWith;
+                modInfo.LoadAfter = manifest.LoadAfter;
+                modInfo.LoadBefore = manifest.LoadBefore;
             }
         }
         catch (Exception ex)

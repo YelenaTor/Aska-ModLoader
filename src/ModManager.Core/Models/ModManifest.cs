@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ModManager.Core.Models;
@@ -53,6 +54,7 @@ public class ModManifest
     /// Dependencies required by this mod
     /// </summary>
     [JsonPropertyName("dependencies")]
+    [JsonConverter(typeof(FlexibleModDependencyListConverter))]
     public List<ModDependency> Dependencies { get; set; } = new();
 
     /// <summary>
@@ -84,6 +86,36 @@ public class ModManifest
     /// </summary>
     [JsonPropertyName("website_url")]
     public string? WebsiteUrl { get; set; }
+
+    /// <summary>
+    /// List of mod IDs that are incompatible with this mod
+    /// </summary>
+    [JsonPropertyName("incompatible_with")]
+    public List<ModIncompatibility> IncompatibleWith { get; set; } = new();
+
+    /// <summary>
+    /// Mod IDs that this mod should load after (soft ordering hints)
+    /// </summary>
+    [JsonPropertyName("load_after")]
+    public List<string> LoadAfter { get; set; } = new();
+
+    /// <summary>
+    /// Mod IDs that this mod should load before (soft ordering hints)
+    /// </summary>
+    [JsonPropertyName("load_before")]
+    public List<string> LoadBefore { get; set; } = new();
+}
+
+/// <summary>
+/// Represents an incompatibility declaration between mods
+/// </summary>
+public class ModIncompatibility
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; set; }
 }
 
 /// <summary>
@@ -126,4 +158,40 @@ public class ModSource
     /// </summary>
     [JsonPropertyName("url")]
     public string? Url { get; set; }
+}
+
+/// <summary>
+/// Handles both string and object formats for dependency arrays.
+/// Strings like "com.mod.id" are converted to ModDependency { Id = "com.mod.id" }.
+/// </summary>
+public class FlexibleModDependencyListConverter : JsonConverter<List<ModDependency>>
+{
+    public override List<ModDependency> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var list = new List<ModDependency>();
+        if (reader.TokenType != JsonTokenType.StartArray)
+            return list;
+
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                list.Add(new ModDependency { Id = reader.GetString() ?? string.Empty });
+            }
+            else if (reader.TokenType == JsonTokenType.StartObject)
+            {
+                var dep = JsonSerializer.Deserialize<ModDependency>(ref reader, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+                if (dep != null) list.Add(dep);
+            }
+        }
+        return list;
+    }
+
+    public override void Write(Utf8JsonWriter writer, List<ModDependency> value, JsonSerializerOptions options)
+    {
+        JsonSerializer.Serialize(writer, value, options);
+    }
 }

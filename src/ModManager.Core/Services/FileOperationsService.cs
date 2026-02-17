@@ -361,4 +361,74 @@ public class FileOperationsService
             return false;
         }
     }
+
+    /// <summary>
+    /// Moves a directory safely, handling cross-volume moves by falling back to copy-delete
+    /// </summary>
+    public async Task<bool> MoveDirectoryAsync(string sourceDir, string destDir)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                if (!Directory.Exists(sourceDir))
+                {
+                    _logger.Warning("Source directory not found: {Path}", sourceDir);
+                    return false;
+                }
+
+                // Ensure parent of destination exists
+                var destParent = Path.GetDirectoryName(destDir);
+                if (!string.IsNullOrEmpty(destParent) && !Directory.Exists(destParent))
+                {
+                    Directory.CreateDirectory(destParent);
+                }
+
+                // If destination exists, delete it first (overwrite behavior)
+                if (Directory.Exists(destDir))
+                {
+                    Directory.Delete(destDir, true);
+                }
+
+                // Try atomic move first (fastest)
+                try
+                {
+                    Directory.Move(sourceDir, destDir);
+                    _logger.Information("Moved directory (atomic): {Source} -> {Dest}", sourceDir, destDir);
+                    return true;
+                }
+                catch (IOException)
+                {
+                    _logger.Information("Atomic move failed (likely cross-volume), falling back to copy-delete: {Source} -> {Dest}", sourceDir, destDir);
+                    // Fallback for cross-volume moves
+                    CopyDirectory(sourceDir, destDir);
+                    Directory.Delete(sourceDir, true);
+                    _logger.Information("Moved directory (copy-delete): {Source} -> {Dest}", sourceDir, destDir);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to move directory: {Source} -> {Dest}", sourceDir, destDir);
+                return false;
+            }
+        });
+    }
+
+    private void CopyDirectory(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+
+        foreach (var file in Directory.GetFiles(sourceDir))
+        {
+            var destFile = Path.Combine(destDir, Path.GetFileName(file));
+            File.Copy(file, destFile, true);
+        }
+
+        foreach (var subdir in Directory.GetDirectories(sourceDir))
+        {
+            var destSubdir = Path.Combine(destDir, Path.GetFileName(subdir));
+            CopyDirectory(subdir, destSubdir);
+        }
+    }
 }

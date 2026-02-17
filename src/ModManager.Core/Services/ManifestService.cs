@@ -12,8 +12,8 @@ public class ManifestService
 {
     private readonly ILogger _logger;
 
-    // Regex patterns for validation
-    private static readonly Regex IdPattern = new Regex(@"^[a-z0-9_.-]+$", RegexOptions.Compiled);
+    // Regex patterns for validation - allow uppercase for Thunderstore-style IDs
+    private static readonly Regex IdPattern = new Regex(@"^[a-zA-Z0-9_.-]+$", RegexOptions.Compiled);
     private static readonly Regex SemanticVersionPattern = new Regex(@"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$", RegexOptions.Compiled);
 
     public ManifestService(ILogger logger)
@@ -56,12 +56,23 @@ public class ManifestService
 
             if (string.IsNullOrWhiteSpace(manifest.Author))
             {
-                result.AddError("Author is required");
+                manifest.Author = "Unknown";
+                result.AddWarning("Author not specified in manifest — defaulted to 'Unknown'");
             }
 
             if (string.IsNullOrWhiteSpace(manifest.Entry))
             {
-                result.AddError("Entry point is required");
+                // Try to auto-detect entry from files list
+                var dllFile = manifest.Files.FirstOrDefault(f => f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
+                if (dllFile != null)
+                {
+                    manifest.Entry = dllFile;
+                    result.AddWarning($"Entry point was auto-detected as '{dllFile}'");
+                }
+                else
+                {
+                    result.AddWarning("No entry point specified and no DLL found in files list");
+                }
             }
 
             // Validate dependencies
@@ -71,11 +82,13 @@ public class ManifestService
                 result.Merge(depResult);
             }
 
-            // Validate source if present
+            // Validate source if present (non-blocking)
             if (manifest.Source != null)
             {
                 var sourceResult = ValidateSource(manifest.Source);
-                result.Merge(sourceResult);
+                // Demote source errors to warnings – missing source shouldn't block install
+                result.AddWarnings(sourceResult.Errors);
+                result.AddWarnings(sourceResult.Warnings);
             }
 
             // Validate checksum if present
@@ -127,6 +140,41 @@ public class ManifestService
                 return result;
             }
 
+            // --- Thunderstore manifest normalization ---
+            // Thunderstore uses different field names; fill in gaps from raw JSON
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                // version_number → Version
+                if (string.IsNullOrWhiteSpace(manifest.Version))
+                {
+                    if (root.TryGetProperty("version_number", out var vn))
+                        manifest.Version = vn.GetString() ?? string.Empty;
+                }
+
+                // author / author_name
+                if (string.IsNullOrWhiteSpace(manifest.Author))
+                {
+                    if (root.TryGetProperty("author_name", out var an))
+                        manifest.Author = an.GetString() ?? string.Empty;
+                    else if (root.TryGetProperty("author", out var a))
+                        manifest.Author = a.GetString() ?? string.Empty;
+                }
+
+                // Derive Id from name if missing
+                if (string.IsNullOrWhiteSpace(manifest.Id) && !string.IsNullOrWhiteSpace(manifest.Name))
+                {
+                    manifest.Id = manifest.Name.Replace(" ", "_");
+                    _logger.Debug("Derived mod ID from name: {ModId}", manifest.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Thunderstore normalization encountered an issue; continuing with standard fields");
+            }
+
             result.Manifest = manifest;
             result.Success = true;
 
@@ -146,6 +194,7 @@ public class ManifestService
 
         return result;
     }
+
 
     /// <summary>
     /// Legacy async wrapper for callers expecting async
@@ -176,6 +225,7 @@ public class ManifestService
             if (parseResult.Success && parseResult.Manifest != null)
             {
                 var validation = ValidateManifest(parseResult.Manifest);
+                validation.Manifest = parseResult.Manifest; // preserve auto-detected Entry
                 return validation;
             }
 
@@ -260,16 +310,17 @@ public class ManifestService
 
         if (string.IsNullOrWhiteSpace(dependency.Id))
         {
-            result.AddError("Dependency ID is required");
+            result.AddWarning("Dependency has an empty ID – skipped");
         }
         else if (!IdPattern.IsMatch(dependency.Id))
         {
-            result.AddError($"Dependency ID '{dependency.Id}' is invalid");
+            // Thunderstore uses Author-ModName-Version format; log but don't block
+            result.AddWarning($"Dependency ID '{dependency.Id}' uses a non-standard format");
         }
 
         if (!string.IsNullOrEmpty(dependency.MinVersion) && !SemanticVersionPattern.IsMatch(dependency.MinVersion))
         {
-            result.AddError($"Dependency minimum version '{dependency.MinVersion}' is not a valid semantic version");
+            result.AddWarning($"Dependency minimum version '{dependency.MinVersion}' is not a valid semantic version");
         }
 
         return result;

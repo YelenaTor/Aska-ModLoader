@@ -1,75 +1,87 @@
 # Aska Mod Manager
 
-Aska Mod Manager is a WIP BepInEx runtime validator and desktop management experience for the game **ASKA**. The current milestone focuses on:
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/YelenaTor/Aska-ModLoader)
+![License](https://img.shields.io/github/license/YelenaTor/Aska-ModLoader)
+![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
+![Platform](https://img.shields.io/badge/platform-windows-blue)
 
-- Deterministic BepInEx runtime validation
-- Manual game-path configuration with logging
-- Dependency-aware mod enable/disable
-- Safe mod installation with rollback on failure
-- Desktop UI (WPF/MVVM) for managing installs
+**The essential companion for modding ASKA.**
 
-Future milestones will bring full mod repository integration, runtime toggles, and advanced UX.
+Aska Mod Manager provides a safe, modern, and reliable way to discover, install, and manage mods for ASKA. Built with robustness in mind, it handles complex dependencies, validates your runtime environment, and prevents common crashes before they happen.
 
-## Features (Current Phase)
+---
 
-- **Runtime Validation**: Checks ASKA executable, BepInEx core DLL, loader files, and plugin directory state before enabling mod management.
-- **Manual Game Path Resolution**: Users can point the manager to any ASKA install; Windows-only.
-- **BepInEx Bootstrap**: Guided installation flow with confirmation and status logging.
-- **Mod Lifecycle Foundations**:
-  - Install from ZIP with manifest validation, duplicate detection, and rollback safety.
-  - Enable/disable operations honor dependency requirements and file backups.
-  - Uninstall guards against removing mods that have dependents.
-- **Desktop UI**: WPF front-end using MVVM + MahApps.Metro, featuring a dedicated Diagnostics tab for troubleshooting.
-- **Observability & Diagnostics (Phase 2)**:
-  - **Persistent Error Tracking**: All runtime errors are captured and stored in LiteDB, surviving application restarts.
-  - **Smart Mod Attribution**: Automatically attributes BepInEx runtime crashes to specific mods using assembly matching logic.
-  - **Diagnostic Bundles**: One-click generation of JSON diagnostic bundles for easy support and remote troubleshooting.
-  - **Platform Hardening**: Includes game process detection and file lock retry logic to prevent data corruption.
+## ✨ Features
 
-## Project Structure
+### 🚀 Core Management
+- **One-Click Install**: Install mods directly from Thunderstore or local ZIP files.
+- **Smart Dependencies**: Automatically resolves and installs all required dependencies recursively.
+- **Safe Management**: Enable, disable, or uninstall mods without breaking your game.
+- **Update Tracking**: Automatically checks for updates and notifies you of new versions.
 
-```
-src/
-  ModManager.Core/        # Business logic, dependency validation, runtime services
-  ModManager.DesktopUI/   # WPF application (MVVM, Serilog logging)
-  ModManager.BepInExPlugin/ (placeholder for future in-game integration)
-```
+### 🛡️ Safety & Stability
+- **Crash Rollback**: Detects boot loops and offers to disable the problematic mod automatically.
+- **Runtime Validation**: Verifies BepInEx integrity and repairs critical files like `0Harmony.dll`.
+- **Conflict Detection**: Warns you about known incompatibilities between mods.
+- **Atomic Operations**: Installations are transactional—no partial or corrupted installs.
 
-## Getting Started
+### 🎮 improved Experience
+- **Game Launcher**: Launch ASKA directly with optional "Close on Launch" behavior.
+- **Diagnostics**: Built-in log viewer and "Copy Diagnostic Bundle" for easy support.
+- **Modern UI**: Clean, dark-themed interface powered by MahApps.Metro.
+
+---
+
+## 📦 Installation
+
+1. **Download**: Grab the latest release from the [Releases page](https://github.com/YelenaTor/Aska-ModLoader/releases).
+2. **Extract**: Unzip the contents to a **dedicated folder** (e.g., `C:\AskaModManager`).
+   > ⚠️ **IMPORTANT**: Do NOT install inside the game folder or `BepInEx` folder.
+3. **Run**: Launch `ModManager.DesktopUI.exe`.
+4. **Setup**: Point the manager to your ASKA installation directory when prompted.
+
+---
+
+## 🛠️ Building from Source
 
 ### Prerequisites
-
 - Windows 10/11
 - .NET 8.0 SDK
-- ASKA installed via Steam
-- BepInEx IL2CPP build (installed via manager or manually)
+- Git
 
-### Build Instructions
-
+### Instructions
 ```bash
 git clone https://github.com/YelenaTor/Aska-ModLoader.git
 cd Aska-ModLoader
 dotnet build src/ModManager.DesktopUI
-```
-
-### Running
-
-```bash
 dotnet run --project src/ModManager.DesktopUI/ModManager.DesktopUI.csproj
 ```
 
-When prompted, configure your ASKA path and install BepInEx if needed.
+---
 
-## Contributing
+## 🗺️ Roadmap
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup, commit conventions, and PR workflow.
+- [x] **Phase 1**: Production Hardening (Atomic installs, Race safety)
+- [x] **Phase 2**: Observability (Error tracking, Diagnostics)
+- [x] **Phase 3**: UX Refinement (Conflict dialogs, Progress status)
+- [x] **Phase 4**: Thunderstore Integration (Discovery, Remote install)
+- [x] **Phase 5**: Distribution (Game Launcher, Recursive Deps)
+- [ ] **Phase 6**: Advanced (Profiles, One-Click Website Install)
 
-## License
+See [roadmap.md](roadmap.md) for detailed progress.
 
-This project is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for details.
+---
 
-## Acknowledgments
+## 🤝 Contributing
 
-- BepInEx team for the Unity/IL2CPP modding framework
-- Serilog, CommunityToolkit.Mvvm, and MahApps.Metro contributors
-- Early ASKA modding community for feedback and test cases
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started.
+
+## 📄 License
+
+This project is licensed under the [BSD 3-Clause License](LICENSE).
+
+## 💖 Acknowledgments
+
+- **BepInEx Team** for the incredible modding framework.
+- **Thunderstore** for the API and hosting.
+- **ASKA Community** for testing and feedback.

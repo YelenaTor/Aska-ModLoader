@@ -80,6 +80,46 @@ public class BepInExRuntimeValidator : IBepInExRuntimeValidator
                 status = BepInExRuntimeStatus.Installed;
             }
 
+            string? version = null;
+            if (status == BepInExRuntimeStatus.Installed && coreDllExists)
+            {
+                try
+                {
+                    var versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(bepinexCoreDll);
+                    version = versionInfo.FileVersion;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to extract BepInEx version from {DllPath}", bepinexCoreDll);
+                }
+            }
+
+            // Check for HarmonyX (0Harmony.dll in core folder)
+            var harmonyDll = Path.Combine(bepinexRoot, "core", "0Harmony.dll");
+            var harmonyInstalled = File.Exists(harmonyDll);
+            string? harmonyVersion = null;
+
+            if (harmonyInstalled)
+            {
+                try
+                {
+                    var harmonyVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(harmonyDll);
+                    harmonyVersion = harmonyVersionInfo.FileVersion;
+                    _logger.Information("HarmonyX detected: v{Version}", harmonyVersion);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to extract HarmonyX version from {DllPath}", harmonyDll);
+                }
+            }
+            else if (status == BepInExRuntimeStatus.Installed)
+            {
+                // BepInEx is installed but Harmony is missing — mark as corrupt
+                status = BepInExRuntimeStatus.Corrupt;
+                failureReason = "HarmonyX (0Harmony.dll) is missing from BepInEx/core";
+                _logger.Warning("HarmonyX not found at {Path}", harmonyDll);
+            }
+
             var result = new BepInExRuntimeResult
             {
                 Status = status,
@@ -88,7 +128,10 @@ public class BepInExRuntimeValidator : IBepInExRuntimeValidator
                 CoreDllExists = coreDllExists,
                 PluginsFolderExists = pluginsFolderExists,
                 LoaderExists = loaderExists,
-                FailureReason = failureReason
+                HarmonyInstalled = harmonyInstalled,
+                HarmonyVersion = harmonyVersion,
+                FailureReason = failureReason,
+                Version = version
             };
 
             _logger.Information("BepInEx runtime validation completed: {Status}", result.Status);

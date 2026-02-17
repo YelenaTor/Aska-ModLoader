@@ -35,14 +35,14 @@ public class RealModManagerFacade : IModManagerFacade
         _crashDiagnostics.LogUpdated += (sender, message) => CrashLogUpdated?.Invoke(this, message);
     }
 
-    public IEnumerable<ModDisplayModel> GetInstalledMods()
+    public async Task<IEnumerable<ModDisplayModel>> GetInstalledModsAsync()
     {
         try
         {
             _logger.Information("Starting mod load from Core repository");
             
             // Use real Core services to load mods
-            var mods = _modRepository.ListInstalledAsync().GetAwaiter().GetResult();
+            var mods = await _modRepository.ListInstalledAsync();
             
             _logger.Information("Repository returned {Count} mods", mods.Count());
             
@@ -65,13 +65,21 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult InstallFromZip(string zipPath)
+    public async Task<FacadeOperationResult> InstallFromZipAsync(string zipPath)
     {
         try
         {
             _logger.Information("Facade installing mod from ZIP: {ZipPath}", zipPath);
-            _modRepository.InstallFromZipAsync(zipPath).GetAwaiter().GetResult();
-            _statusMessage = "Installation completed";
+            var installResult = await _modRepository.InstallFromZipAsync(zipPath);
+            
+            // Build status message with any warnings
+            var message = $"Installed '{installResult.InstalledModId ?? "mod"}' successfully";
+            if (installResult.Warnings.Count > 0)
+            {
+                message += $" ⚠ {string.Join(" | ", installResult.Warnings)}";
+            }
+            
+            _statusMessage = message;
             return FacadeOperationResult.SuccessResult(_statusMessage);
         }
         catch (Exception ex)
@@ -82,20 +90,20 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult EnableMod(string modId)
+    public async Task<FacadeOperationResult> EnableModAsync(string modId)
     {
         try
         {
             _logger.Information("Facade enabling mod: {ModId}", modId);
-            _modRepository.SetEnabledAsync(modId, true).GetAwaiter().GetResult();
+            var outcome = await _modRepository.SetEnabledAsync(modId, true);
+            if (!outcome.Success)
+            {
+                _statusMessage = outcome.FailureReason ?? $"Failed to enable {modId}";
+                return MapValidationToFacadeResult(outcome);
+            }
+            
             _statusMessage = $"Enabled {modId}";
             return FacadeOperationResult.SuccessResult(_statusMessage);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _statusMessage = ex.Message;
-            _logger.Warning(ex, "Dependency gate prevented enabling mod: {ModId}", modId);
-            return FacadeOperationResult.FailureResult(_statusMessage);
         }
         catch (Exception ex)
         {
@@ -105,12 +113,12 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult DisableMod(string modId)
+    public async Task<FacadeOperationResult> DisableModAsync(string modId)
     {
         try
         {
             _logger.Information("Facade disabling mod: {ModId}", modId);
-            _modRepository.SetEnabledAsync(modId, false).GetAwaiter().GetResult();
+            await _modRepository.SetEnabledAsync(modId, false);
             _statusMessage = $"Disabled {modId}";
             return FacadeOperationResult.SuccessResult(_statusMessage);
         }
@@ -128,12 +136,12 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult UninstallMod(string modId)
+    public async Task<FacadeOperationResult> UninstallModAsync(string modId)
     {
         try
         {
             _logger.Information("Facade uninstalling mod: {ModId}", modId);
-            _modRepository.UninstallAsync(modId).GetAwaiter().GetResult();
+            await _modRepository.UninstallAsync(modId);
             _statusMessage = $"Uninstalled {modId}";
             return FacadeOperationResult.SuccessResult(_statusMessage);
         }
@@ -145,12 +153,12 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult RefreshMods()
+    public async Task<FacadeOperationResult> RefreshModsAsync()
     {
         try
         {
             // Force-load to ensure repository path and DB are accessible
-            var mods = _modRepository.ListInstalledAsync().GetAwaiter().GetResult();
+            var mods = await _modRepository.ListInstalledAsync();
             _statusMessage = $"Loaded {mods.Count()} mods";
             return FacadeOperationResult.SuccessResult(_statusMessage);
         }
@@ -172,26 +180,13 @@ public class RealModManagerFacade : IModManagerFacade
         return _crashDiagnostics.LastRuntimeError;
     }
 
-    public FacadeOperationResult ValidateModEnable(string modId)
+    public async Task<FacadeOperationResult> ValidateModEnableAsync(string modId)
     {
         try
         {
-            var valid = _modRepository.ValidateModAsync(modId).GetAwaiter().GetResult();
-            if (!valid)
-            {
-                var message = $"Validation failed for {modId}";
-                _statusMessage = message;
-                return FacadeOperationResult.FailureResult(message);
-            }
-
-            _statusMessage = "Validation succeeded";
-            return FacadeOperationResult.SuccessResult(_statusMessage);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _statusMessage = ex.Message;
-            _logger.Warning(ex, "Dependency validation failed for {ModId}", modId);
-            return FacadeOperationResult.FailureResult(_statusMessage);
+            var outcome = await _modRepository.ValidateModDetailedAsync(modId);
+            _statusMessage = outcome.Success ? "Validation successful" : (outcome.FailureReason ?? "Validation failed");
+            return MapValidationToFacadeResult(outcome);
         }
         catch (Exception ex)
         {
@@ -201,20 +196,25 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult ValidateZipInstall(string zipPath)
+    public async Task<DependencyValidationOutcome> ValidateModDetailedAsync(string modId)
+    {
+        return await _modRepository.ValidateModDetailedAsync(modId);
+    }
+
+    public Task<FacadeOperationResult> ValidateZipInstallAsync(string zipPath)
     {
         if (string.IsNullOrWhiteSpace(zipPath) || !File.Exists(zipPath))
         {
             var message = "ZIP file not found";
             _statusMessage = message;
-            return FacadeOperationResult.FailureResult(message);
+            return Task.FromResult(FacadeOperationResult.FailureResult(message));
         }
 
         _statusMessage = "ZIP file ready for install";
-        return FacadeOperationResult.SuccessResult(_statusMessage);
+        return Task.FromResult(FacadeOperationResult.SuccessResult(_statusMessage));
     }
 
-    public FacadeOperationResult InstallBepInEx(string gamePath)
+    public async Task<FacadeOperationResult> InstallBepInExAsync(string gamePath)
     {
         try
         {
@@ -224,7 +224,7 @@ public class RealModManagerFacade : IModManagerFacade
             var validator = new BepInExRuntimeValidator(_logger);
             var installer = new BepInExInstallerService(_logger, httpClient, validator);
 
-            var result = installer.InstallAsync(gamePath).GetAwaiter().GetResult();
+            var result = await installer.InstallAsync(gamePath);
             _statusMessage = result.Message ?? (result.Success ? "BepInEx installed" : "BepInEx install failed");
 
             return result.Success
@@ -244,28 +244,28 @@ public class RealModManagerFacade : IModManagerFacade
         _statusMessage = message;
     }
 
-    public IEnumerable<string> GetProfiles()
+    public Task<IEnumerable<string>> GetProfilesAsync()
     {
         try
         {
             // ProfileService is not injected yet, so instantiate locally for now
             // In a real app, this would be injected
             var profileService = new ProfileService(_logger, _modRepository, _askaPath);
-            return profileService.GetProfiles().Select(p => p.Name);
+            return Task.FromResult(profileService.GetProfiles().Select(p => p.Name));
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Facade failed to get profiles");
-            return Enumerable.Empty<string>();
+            return Task.FromResult(Enumerable.Empty<string>());
         }
     }
 
-    public FacadeOperationResult SwitchToProfile(string profileName)
+    public async Task<FacadeOperationResult> SwitchToProfileAsync(string profileName)
     {
         try
         {
             var profileService = new ProfileService(_logger, _modRepository, _askaPath);
-            var success = profileService.SwitchToProfileAsync(profileName).GetAwaiter().GetResult();
+            var success = await profileService.SwitchToProfileAsync(profileName);
             if (success)
             {
                 _statusMessage = $"Switched to profile: {profileName}";
@@ -285,12 +285,12 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public FacadeOperationResult SaveCurrentAsProfile(string profileName)
+    public async Task<FacadeOperationResult> SaveCurrentAsProfileAsync(string profileName)
     {
         try
         {
             var profileService = new ProfileService(_logger, _modRepository, _askaPath);
-            var success = profileService.SaveCurrentAsProfileAsync(profileName).GetAwaiter().GetResult();
+            var success = await profileService.SaveCurrentAsProfileAsync(profileName);
             if (success)
             {
                 _statusMessage = $"Saved current mods as profile: {profileName}";
@@ -310,17 +310,17 @@ public class RealModManagerFacade : IModManagerFacade
         }
     }
 
-    public string? GetActiveProfile()
+    public Task<string?> GetActiveProfileAsync()
     {
         try
         {
             var profileService = new ProfileService(_logger, _modRepository, _askaPath);
-            return profileService.GetActiveProfile();
+            return Task.FromResult(profileService.GetActiveProfile());
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Facade failed to get active profile");
-            return null;
+            return Task.FromResult<string?>(null);
         }
     }
 
@@ -395,15 +395,15 @@ public class RealModManagerFacade : IModManagerFacade
         return detector.IsAskaRunning();
     }
 
-    public IEnumerable<RuntimeError> GetRuntimeErrors()
+    public Task<IEnumerable<RuntimeError>> GetRuntimeErrorsAsync()
     {
-        return _modRepository.GetRuntimeErrorsAsync().GetAwaiter().GetResult();
+        return _modRepository.GetRuntimeErrorsAsync();
     }
 
-    public string GenerateDiagnosticBundle()
+    public async Task<string> GenerateDiagnosticBundleAsync()
     {
-        var errors = GetRuntimeErrors();
-        var mods = GetInstalledMods();
+        var errors = await GetRuntimeErrorsAsync();
+        var mods = await GetInstalledModsAsync();
         var bundle = new
         {
             Timestamp = DateTime.UtcNow,
@@ -412,5 +412,204 @@ public class RealModManagerFacade : IModManagerFacade
             Mods = mods
         };
         return System.Text.Json.JsonSerializer.Serialize(bundle, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    }
+
+    public async Task<FacadeOperationResult> KillGameAsync()
+    {
+        try
+        {
+            _logger.Information("Facade killing game process");
+            var processes = System.Diagnostics.Process.GetProcessesByName("Aska");
+            foreach (var process in processes)
+            {
+                _logger.Information("Terminating process: {ProcessName} (PID: {Id})", process.ProcessName, process.Id);
+                process.Kill();
+                await process.WaitForExitAsync();
+            }
+            
+            _statusMessage = "Game process terminated";
+            return FacadeOperationResult.SuccessResult(_statusMessage);
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Failed to kill game: {ex.Message}";
+            _logger.Error(ex, "Facade failed to kill game process");
+            return FacadeOperationResult.FailureResult(_statusMessage);
+        }
+    }
+
+    private FacadeOperationResult MapValidationToFacadeResult(DependencyValidationOutcome outcome)
+    {
+        var result = new FacadeOperationResult
+        {
+            Success = outcome.Success,
+            Message = outcome.FailureReason ?? (outcome.Success ? "Operation successful" : "Operation failed"),
+            Errors = outcome.Errors?.ToList() ?? new List<string>(),
+            DependencyErrors = outcome.MissingDependencies.Select(m => new ModDependencyDisplayModel
+            {
+                Id = m.DependencyId,
+                MinVersion = NormalizeVersion(m.RequiredVersion),
+                IsOptional = m.IsOptional,
+                IsSatisfied = false,
+                StatusMessage = "Missing"
+            }).Concat(outcome.VersionConflicts.Select(v => new ModDependencyDisplayModel
+            {
+                Id = v.DependencyId,
+                MinVersion = NormalizeVersion(v.RequiredVersion),
+                IsSatisfied = false,
+                StatusMessage = $"Conflict: installed {v.InstalledVersion}"
+            })).Concat(outcome.CircularDependencies.Select(c => new ModDependencyDisplayModel
+            {
+                Id = "Cycle",
+                StatusMessage = $"Circular: {c.CycleDescription}"
+            })).ToList()
+        };
+
+        if (!outcome.Success && string.IsNullOrEmpty(result.Message) && result.DependencyErrors.Any())
+        {
+            result.Message = "Dependency requirements not met.";
+        }
+
+        return result;
+    }
+
+    public async Task<IEnumerable<ModUpdateInfo>> CheckForUpdatesAsync()
+    {
+        try
+        {
+            return await _modRepository.CheckForUpdatesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to check for updates");
+            return Enumerable.Empty<ModUpdateInfo>();
+        }
+    }
+
+    public async Task<FacadeOperationResult> UpdateModAsync(string modId)
+    {
+        try
+        {
+            await _modRepository.UpdateModAsync(modId);
+            return FacadeOperationResult.SuccessResult($"Mod {modId} updated successfully.");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to update mod: {ModId}", modId);
+            return FacadeOperationResult.FailureResult($"Failed to update mod: {ex.Message}");
+        }
+    }
+
+    public async Task<IEnumerable<RemoteModInfo>> GetAvailableModsAsync()
+    {
+        try
+        {
+            return await _modRepository.GetAvailableModsAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to get available mods");
+            return Enumerable.Empty<RemoteModInfo>();
+        }
+    }
+
+    // --- App Self-Update ---
+
+    private AppUpdateService? _appUpdateService;
+
+    private AppUpdateService GetAppUpdateService()
+    {
+        _appUpdateService ??= new AppUpdateService(_logger);
+        return _appUpdateService;
+    }
+
+    public async Task<AppUpdateInfo?> CheckForAppUpdateAsync()
+    {
+        try
+        {
+            return await GetAppUpdateService().CheckForAppUpdateAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to check for app updates");
+            return null;
+        }
+    }
+
+    public async Task<bool> InitiateAppUpdateAsync()
+    {
+        try
+        {
+            return await GetAppUpdateService().InitiateUpdateAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Facade failed to initiate app update");
+            return false;
+        }
+    }
+
+    public async Task<FacadeOperationResult> InstallFromUrlAsync(Uri url, string modName)
+    {
+        try
+        {
+            _logger.Information("Facade installing remote mod '{ModName}' from {Url}", modName, url);
+            var result = await _modRepository.InstallFromUrlAsync(url);
+            
+            if (result.Success)
+            {
+                var message = $"Installed {modName} successfully";
+                if (result.Warnings.Any())
+                {
+                    message += $" (Warnings: {string.Join(", ", result.Warnings)})";
+                }
+                _statusMessage = message;
+                return FacadeOperationResult.SuccessResult(_statusMessage);
+            }
+            else
+            {
+                _statusMessage = $"Failed to install {modName}: {string.Join(", ", result.Errors)}";
+                return FacadeOperationResult.FailureResult(_statusMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Failed to install {modName}: {ex.Message}";
+            _logger.Error(ex, "Facade failed to install remote mod {ModName} from {Url}", modName, url);
+            return FacadeOperationResult.FailureResult(_statusMessage);
+        }
+
+
+        }
+
+    public async Task<FacadeOperationResult> InstallModWithDependenciesAsync(RemoteModInfo mod)
+    {
+        try
+        {
+            _logger.Information("Facade installing remote mod '{ModName}' and dependencies", mod.Name);
+            var result = await _modRepository.InstallModWithDependenciesAsync(mod);
+            
+            if (result.Success)
+            {
+                var message = $"Installed {mod.Name} and dependencies successfully";
+                if (result.Warnings.Any())
+                {
+                    message += $" (Warnings: {string.Join(", ", result.Warnings)})";
+                }
+                _statusMessage = message;
+                return FacadeOperationResult.SuccessResult(_statusMessage);
+            }
+            else
+            {
+                _statusMessage = $"Failed to install {mod.Name}: {string.Join(", ", result.Errors)}";
+                return FacadeOperationResult.FailureResult(_statusMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+             _statusMessage = $"Failed to install {mod.Name}: {ex.Message}";
+            _logger.Error(ex, "Facade failed to install remote mod {ModName} recursively", mod.Name);
+            return FacadeOperationResult.FailureResult(_statusMessage);
+        }
     }
 }

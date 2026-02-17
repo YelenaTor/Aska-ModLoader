@@ -1,104 +1,60 @@
 # Contributing to Aska Mod Manager
 
-Thank you for your interest in contributing to the Aska Mod Manager! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing! We want to make it as easy and transparent as possible, whether it's:
 
-## Getting Started
+- Reporting a bug
+- Discussing the current state of the code
+- Submitting a fix
+- Proposing new features
 
-### Development Environment Setup
+## 🚀 Getting Started
 
-1. Clone the repository
-2. Install .NET 8.0 SDK
-3. Use Visual Studio 2022 or VS Code with C# extensions
-4. Run `dotnet build src/ModManager.DesktopUI` (restores Core as well)
-5. Optional: `dotnet test` when tests are available
+### Prerequisites
+- **.NET 8.0 SDK**
+- Visual Studio 2022 or VS Code (with C# Dev Kit)
 
-### Running Tests
+### Setup
+1. Fork the repo on GitHub.
+2. Clone your fork locally:
+   ```bash
+   git clone https://github.com/YOUR-USERNAME/Aska-ModLoader.git
+   ```
+3. Build the solution:
+   ```bash
+   dotnet build src/ModManager.DesktopUI
+   ```
 
-```bash
-dotnet test
-```
+##  workflow
 
-## Development Guidelines
+1. Create a feature branch from `main`:
+   ```bash
+   git checkout -b feature/amazing-feature
+   ```
+2. Make your changes.
+3. **Test your changes** carefully.
+4. Commit your changes using descriptive messages.
+   > We follow [Conventional Commits](https://www.conventionalcommits.org/).  
+   > Example: `feat: add support for Thunderstore v2 API`
+5. Push to your fork and submit a Pull Request.
 
-### Code Style
+## 📂 Project Structure
 
-- Follow C# naming conventions
-- Use meaningful variable and method names
-- Add XML documentation for public APIs
-- Keep methods small and focused
+- **`src/ModManager.Core`**: The brain. Contains all business logic, services, and models.
+- **`src/ModManager.DesktopUI`**: The face. WPF application using MVVM and MahApps.Metro.
+- **`src/ModManager.BepInExPlugin`**: In-game hook (placeholder/wip).
 
-### Commit Messages
+## 🐛 Reporting Bugs
 
-- Use clear, descriptive commit messages
-- Start with a verb (e.g., "Add", "Fix", "Update")
-- Limit to 72 characters for the first line
-- Reference the area (e.g., Core, DesktopUI, BepInEx) when useful
+Bugs are tracked as GitHub issues. When opening an issue, please include:
+- A clear title and description.
+- Steps to reproduce the issue.
+- Expected vs. actual behavior.
+- **Log files** (from `AppData/Roaming/AskaModManager/logs` or the "Diagnostics" tab).
 
-### Pull Request Process
+## 💡 Feature Requests
 
-1. Fork the repository
-2. Create a feature branch from `main`
-3. Make your changes
-4. Add tests for new functionality (when applicable)
-5. Ensure `dotnet build src/ModManager.DesktopUI` succeeds
-6. Submit a pull request
+We love new ideas! Please open an issue to discuss your idea before implementing it. This saves time and ensures alignment with the project roadmap.
 
-## Project Structure
+## 📜 License
 
-### Core Components
-
-- **ModManager.Core**: Contains all business logic, data models, and services
-- **ModManager.DesktopUI**: WPF application using MVVM pattern
-- **ModManager.BepInExPlugin**: Unity plugin for in-game functionality
-
-### Key Areas for Contribution
-
-1. **UI/UX Improvements**: Enhance the desktop application interface
-2. **Online Integration**: Add support for additional mod repositories
-3. **Diagnostics**: Improve crash analysis and log parsing
-4. **Testing**: Add unit and integration tests
-5. **Documentation**: Improve user and developer documentation
-
-## Testing
-
-### Unit Tests
-
-- Test all core business logic in ModManager.Core
-- Mock external dependencies (HTTP calls, file system)
-- Aim for high code coverage
-
-### Integration Tests
-
-- Test mod installation workflows
-- Test UI interactions
-- Test BepInEx plugin functionality
-
-## Bug Reports
-
-When reporting bugs, please include:
-
-- Operating system and version
-- Aska version
-- BepInEx version
-- Steps to reproduce
-- Expected vs actual behavior
-- Relevant log files
-
-## Feature Requests
-
-Feature requests should include:
-
-- Clear description of the feature
-- Use case and motivation
-- Proposed implementation (if known)
-- Potential impact on existing functionality
-
-## Code of Conduct
-
-Be respectful and constructive in all interactions. We welcome contributors of all experience levels and backgrounds.
-
-## Questions
-
-Feel free to open an issue for questions about development or the project structure.
-
-Thank you for contributing!
+By contributing, you agree that your contributions will be licensed under its [BSD 3-Clause License](LICENSE).

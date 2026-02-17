@@ -84,6 +84,21 @@ public class ModInfo
     /// Load order priority (lower numbers load first)
     /// </summary>
     public int LoadOrder { get; set; }
+
+    /// <summary>
+    /// List of incompatible mod declarations
+    /// </summary>
+    public List<ModIncompatibility> IncompatibleWith { get; set; } = new();
+
+    /// <summary>
+    /// Mod IDs this mod should load after (soft ordering)
+    /// </summary>
+    public List<string> LoadAfter { get; set; } = new();
+
+    /// <summary>
+    /// Mod IDs this mod should load before (soft ordering)
+    /// </summary>
+    public List<string> LoadBefore { get; set; } = new();
 }
 
 /// <summary>

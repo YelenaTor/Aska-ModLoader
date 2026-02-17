@@ -8,5 +8,8 @@ public sealed class BepInExRuntimeResult
     public bool CoreDllExists { get; init; }
     public bool PluginsFolderExists { get; init; }
     public bool LoaderExists { get; init; }
+    public bool HarmonyInstalled { get; init; }
+    public string? HarmonyVersion { get; init; }
     public string? FailureReason { get; init; }
+    public string? Version { get; init; }
 }

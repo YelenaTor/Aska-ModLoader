@@ -3,6 +3,7 @@ using ModManager.Core.Interfaces;
 using ModManager.Core.Models;
 using ModManager.Core.Services;
 using Serilog;
+using System.Net.Http;
 
 namespace ModManager.Core.Services;
 
@@ -18,6 +19,8 @@ public class ModRepository : IModRepository
     private readonly ModInstallationService _installationService;
     private readonly ModScanner _scanner;
     private readonly DependencyResolutionService _dependencyResolver;
+    private readonly DiscoveryService _discoveryService;
+    private readonly HttpClient _httpClient;
 
     public ModRepository(ILogger logger, string askaPath)
     {
@@ -33,6 +36,10 @@ public class ModRepository : IModRepository
             askaPath);
         _scanner = new ModScanner(logger);
         _dependencyResolver = new DependencyResolutionService(logger);
+        
+        _httpClient = new HttpClient();
+        var thunderstoreClient = new ThunderstoreClient(_httpClient, logger);
+        _discoveryService = new DiscoveryService(logger, thunderstoreClient);
         
         // Initialize LiteDB
         var dbPath = Path.Combine(askaPath, "BepInEx", "ModManager.db");
@@ -52,18 +59,13 @@ public class ModRepository : IModRepository
         ClearRuntimeErrorsAsync(100).GetAwaiter().GetResult();
     }
 
-    private bool ValidateDependencies(ModInfo mod)
+    private DependencyValidationOutcome ValidateDependencies(ModInfo mod)
     {
-        return ValidateDependencies(mod, out _);
-    }
-
-    private bool ValidateDependencies(ModInfo mod, out string? failureReason)
-    {
-        failureReason = null;
+        var outcome = new DependencyValidationOutcome { Success = true };
 
         if (mod.Dependencies == null || mod.Dependencies.Count == 0)
         {
-            return true;
+            return outcome;
         }
 
         var modsCollection = _database.GetCollection<ModInfo>("mods");
@@ -72,55 +74,106 @@ public class ModRepository : IModRepository
         // Check for missing/disabled deps and version ranges first
         foreach (var dep in mod.Dependencies.Where(d => !d.Optional))
         {
+            // BepInEx framework dependencies are auto-satisfied when BepInEx is installed
+            if (dep.Id.StartsWith("BepInEx", StringComparison.OrdinalIgnoreCase))
+            {
+                var bepinexCorePath = Path.Combine(Path.GetDirectoryName(_pluginsPath)!, "core");
+                if (Directory.Exists(bepinexCorePath))
+                {
+                    _logger.Debug("Framework dependency '{DepId}' satisfied by installed BepInEx", dep.Id);
+                    continue;
+                }
+            }
+
             var depMod = allMods.FirstOrDefault(m => string.Equals(m.Id, dep.Id, StringComparison.OrdinalIgnoreCase));
             if (depMod == null)
             {
-                failureReason = $"Missing dependency '{dep.Id}' for '{mod.Name}'.";
-                _logger.Warning(failureReason);
-                return false;
+                var failure = $"Missing dependency '{dep.Id}' for '{mod.Name}'.";
+                _logger.Warning(failure);
+                outcome.Success = false;
+                outcome.FailureReason = failure;
+                outcome.MissingDependencies.Add(new MissingDependency
+                {
+                    ModId = mod.Id,
+                    ModName = mod.Name,
+                    DependencyId = dep.Id,
+                    RequiredVersion = dep.MinVersion,
+                    IsOptional = dep.Optional
+                });
             }
-
-            if (!depMod.IsEnabled)
+            else if (!depMod.IsEnabled)
             {
-                failureReason = $"Dependency '{depMod.Name}' must be enabled before '{mod.Name}'.";
-                _logger.Warning(failureReason);
-                return false;
+                var failure = $"Dependency '{depMod.Name}' must be enabled before '{mod.Name}'.";
+                _logger.Warning(failure);
+                outcome.Success = false;
+                outcome.FailureReason = failure;
+                // Treat disabled as "missing" for UI purposes
+                outcome.MissingDependencies.Add(new MissingDependency
+                {
+                    ModId = mod.Id,
+                    ModName = mod.Name,
+                    DependencyId = dep.Id,
+                    IsOptional = dep.Optional
+                });
             }
-
-            var requiredRange = string.IsNullOrWhiteSpace(dep.MinVersion) ? ">=0.0.0" : dep.MinVersion;
-            if (!VersionService.SatisfiesRangeLegacy(depMod.Version ?? "1.0.0", requiredRange))
+            else
             {
-                failureReason = $"Dependency '{depMod.Name}' version {depMod.Version} does not satisfy requirement {requiredRange}.";
-                _logger.Warning(failureReason);
-                return false;
+                var requiredRange = string.IsNullOrWhiteSpace(dep.MinVersion) ? ">=0.0.0" : dep.MinVersion;
+                if (!VersionService.SatisfiesRangeLegacy(depMod.Version ?? "1.0.0", requiredRange))
+                {
+                    var failure = $"Dependency '{depMod.Name}' version {depMod.Version} does not satisfy requirement {requiredRange}.";
+                    _logger.Warning(failure);
+                    outcome.Success = false;
+                    outcome.FailureReason = failure;
+                    outcome.VersionConflicts.Add(new VersionConflict
+                    {
+                        ModId = mod.Id,
+                        ModName = mod.Name,
+                        DependencyId = dep.Id,
+                        DependencyName = depMod.Name,
+                        RequiredVersion = requiredRange,
+                        InstalledVersion = depMod.Version,
+                        ConflictType = VersionConflictType.TooOld
+                    });
+                }
             }
         }
 
         // Run full dependency resolver to detect cycles/missing graph state
         var resolution = _dependencyResolver.ResolveDependencies(allMods);
 
-        var missing = resolution.MissingDependencies.FirstOrDefault(md => md.ModId.Equals(mod.Id, StringComparison.OrdinalIgnoreCase));
-        if (missing != null)
+        var missing = resolution.MissingDependencies.Where(md => md.ModId.Equals(mod.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+        foreach (var m in missing)
         {
-            failureReason = $"Missing dependency '{missing.DependencyId}' for '{mod.Name}'.";
-            return false;
+            if (!outcome.MissingDependencies.Any(x => x.DependencyId == m.DependencyId))
+            {
+                outcome.Success = false;
+                outcome.MissingDependencies.Add(m);
+            }
         }
 
-        var conflict = resolution.VersionConflicts.FirstOrDefault(vc => vc.ModId.Equals(mod.Id, StringComparison.OrdinalIgnoreCase));
-        if (conflict != null)
+        var conflicts = resolution.VersionConflicts.Where(vc => vc.ModId.Equals(mod.Id, StringComparison.OrdinalIgnoreCase)).ToList();
+        foreach (var c in conflicts)
         {
-            failureReason = $"Dependency '{conflict.DependencyName}' version {conflict.InstalledVersion} violates required {conflict.RequiredVersion}.";
-            return false;
+            if (!outcome.VersionConflicts.Any(x => x.DependencyId == c.DependencyId))
+            {
+                outcome.Success = false;
+                outcome.VersionConflicts.Add(c);
+            }
         }
 
         var cycle = resolution.CircularDependencies.FirstOrDefault(cd => cd.ModIds.Contains(mod.Id));
         if (cycle != null)
         {
-            failureReason = $"Circular dependency detected: {cycle.CycleDescription}.";
-            return false;
+            outcome.Success = false;
+            if (string.IsNullOrEmpty(outcome.FailureReason))
+            {
+                outcome.FailureReason = $"Circular dependency detected: {cycle.CycleDescription}.";
+            }
+            outcome.CircularDependencies.Add(cycle);
         }
 
-        return true;
+        return outcome;
     }
 
     // Legacy async wrapper for interface compliance
@@ -176,7 +229,7 @@ public class ModRepository : IModRepository
         return Task.FromResult(result);
     }
 
-    public async Task InstallFromZipAsync(string zipPath)
+    public async Task<InstallationResult> InstallFromZipAsync(string zipPath)
     {
         try
         {
@@ -198,14 +251,10 @@ public class ModRepository : IModRepository
                         IsEnabled = true
                     };
 
-                    var isValid = ValidateDependencies(tempModInfo, out var failureReason);
-                    return await Task.FromResult(new DependencyValidationOutcome
-                    {
-                        Success = isValid,
-                        FailureReason = failureReason
-                    });
+                    var outcome = ValidateDependencies(tempModInfo);
+                    return await Task.FromResult(outcome);
                 });
-            
+
             if (!result.Success)
             {
                 var errorMessage = string.Join("; ", result.Errors);
@@ -235,7 +284,8 @@ public class ModRepository : IModRepository
                     throw new InvalidOperationException($"Mod '{result.InstalledModId}' is already installed.");
                 }
 
-                if (result.InstalledModInfo != null && !ValidateDependencies(result.InstalledModInfo))
+                var validation = ValidateDependencies(result.InstalledModInfo);
+                if (result.InstalledModInfo != null && !validation.Success)
                 {
                     // Dependency check failed; roll back new install
                     var modPath = Path.Combine(_pluginsPath, result.InstalledModId);
@@ -260,6 +310,7 @@ public class ModRepository : IModRepository
             await RefreshDatabaseAsync();
             
             _logger.Information("Successfully installed mod: {ModId}", result.InstalledModId);
+            return result;
         }
         catch (Exception ex)
         {
@@ -268,16 +319,58 @@ public class ModRepository : IModRepository
         }
     }
 
-    public void InstallFromUrl(Uri packageUrl)
+    public async Task<InstallationResult> InstallFromUrlAsync(Uri packageUrl)
     {
-        throw new NotImplementedException("Installation from URL will be implemented in Phase 2");
-    }
+        var tempPath = Path.Combine(Path.GetTempPath(), $"aska_mod_{Guid.NewGuid()}.zip");
+        try
+        {
+            _logger.Information("Downloading mod from {Url} to {TempPath}", packageUrl, tempPath);
+            using (var response = await _httpClient.GetAsync(packageUrl, HttpCompletionOption.ResponseHeadersRead))
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.Error("Download failed with status code: {StatusCode}", response.StatusCode);
+                    return new InstallationResult 
+                    { 
+                        Success = false, 
+                        Errors = new List<string> { $"Download failed: {response.StatusCode}" },
+                        Warnings = new List<string>()
+                    };
+                }
+                
+                using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await response.Content.CopyToAsync(fs);
+                }
+            }
 
-    // Legacy async wrapper for interface compliance
-    public Task InstallFromUrlAsync(Uri packageUrl)
-    {
-        InstallFromUrl(packageUrl);
-        return Task.CompletedTask;
+            _logger.Information("Download complete. Installing from ZIP.");
+            return await InstallFromZipAsync(tempPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to install mod from URL");
+            return new InstallationResult
+            {
+                Success = false,
+                Errors = new List<string> { $"Install failed: {ex.Message}" },
+                Warnings = new List<string>()
+            };
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                try 
+                { 
+                    File.Delete(tempPath); 
+                } 
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to clean up temp file {TempPath}", tempPath);
+                }
+            }
+        }
     }
 
     public void Uninstall(string modId)
@@ -330,7 +423,7 @@ public class ModRepository : IModRepository
         }
     }
 
-    public async Task SetEnabledAsync(string modId, bool enabled)
+    public async Task<DependencyValidationOutcome> SetEnabledAsync(string modId, bool enabled)
     {
         try
         {
@@ -338,7 +431,7 @@ public class ModRepository : IModRepository
             if (mod == null)
             {
                 _logger.Warning("Mod not found: {ModId}", modId);
-                return;
+                return new DependencyValidationOutcome { Success = false, FailureReason = "Mod not found" };
             }
 
             // Check if game is running
@@ -355,10 +448,11 @@ public class ModRepository : IModRepository
             // Dependency validation before enabling
             if (enabled)
             {
-                if (!ValidateDependencies(mod))
+                var validation = ValidateDependencies(mod);
+                if (!validation.Success)
                 {
                     _logger.Warning("Cannot enable mod {ModId} due to missing or incompatible dependencies", modId);
-                    throw new InvalidOperationException($"Dependencies not satisfied for {modId}");
+                    return validation;
                 }
             }
 
@@ -380,10 +474,11 @@ public class ModRepository : IModRepository
                 modsCollection.Update(mod);
 
                 _logger.Information("Mod {ModId} enabled state set to {Enabled}", modId, enabled);
+                return new DependencyValidationOutcome { Success = true };
             }
             else
             {
-                throw new InvalidOperationException($"Failed to set enabled state for mod: {modId}");
+                return new DependencyValidationOutcome { Success = false, FailureReason = $"Failed to set enabled state for mod: {modId}" };
             }
         }
         catch (Exception ex)
@@ -393,28 +488,75 @@ public class ModRepository : IModRepository
         }
     }
 
-    public void UpdateMod(string modId)
+    public async Task UpdateModAsync(string modId)
     {
-        throw new NotImplementedException("Update will be implemented in Phase 2");
+        try
+        {
+            _logger.Information("Updating mod: {ModId}", modId);
+            var updates = await CheckForUpdatesAsync();
+            var update = updates.FirstOrDefault(u => u.ModId == modId);
+
+            if (update == null)
+            {
+                _logger.Warning("No update found for mod: {ModId}", modId);
+                return;
+            }
+
+            // Real update implementation pending
+            _logger.Warning("Update functionality is not yet fully implemented for {ModId}", modId);
+            await Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to update mod: {ModId}", modId);
+            throw;
+        }
     }
 
-    // Legacy async wrapper for interface compliance
-    public Task UpdateModAsync(string modId)
+    public async Task<IEnumerable<ModUpdateInfo>> CheckForUpdatesAsync()
     {
-        UpdateMod(modId);
-        return Task.CompletedTask;
+        try
+        {
+            _logger.Information("Checking for mod updates");
+            var installedMods = await ListInstalledAsync();
+            var availableMods = await _discoveryService.GetAvailableModsAsync();
+
+            var updateList = new List<ModUpdateInfo>();
+
+            foreach (var installed in installedMods)
+            {
+                var remote = availableMods.FirstOrDefault(m => m.Id == installed.Id);
+                if (remote != null && IsNewerVersion(remote.Version, installed.Version))
+                {
+                    updateList.Add(new ModUpdateInfo
+                    {
+                        ModId = installed.Id,
+                        CurrentVersion = installed.Version,
+                        LatestVersion = remote.Version,
+                        DownloadUrl = remote.DownloadUrl,
+                        Changelog = $"Version {remote.Version} released."
+                    });
+                }
+            }
+
+            _logger.Information("Found {Count} updates available", updateList.Count);
+            return updateList;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to check for updates");
+            return Enumerable.Empty<ModUpdateInfo>();
+        }
     }
 
-    public IEnumerable<ModUpdateInfo> CheckForUpdates()
+    private bool IsNewerVersion(string remote, string local)
     {
-        throw new NotImplementedException("Update checking will be implemented in Phase 2");
-    }
-
-    // Legacy async wrapper for interface compliance
-    public Task<IEnumerable<ModUpdateInfo>> CheckForUpdatesAsync()
-    {
-        var result = CheckForUpdates();
-        return Task.FromResult(result);
+        if (Version.TryParse(remote, out var rVer) && Version.TryParse(local, out var lVer))
+        {
+            return rVer > lVer;
+        }
+        // Fallback to string comparison if versioning is non-standard
+        return string.Compare(remote, local, StringComparison.OrdinalIgnoreCase) > 0;
     }
 
     public async Task<bool> ValidateModAsync(string modId)
@@ -427,9 +569,10 @@ public class ModRepository : IModRepository
                 throw new InvalidOperationException($"Mod '{modId}' is not installed.");
             }
 
-            if (!ValidateDependencies(mod, out var dependencyFailure))
+            var validation = ValidateDependencies(mod);
+            if (!validation.Success)
             {
-                throw new InvalidOperationException(dependencyFailure ?? $"Dependencies not satisfied for '{modId}'.");
+                throw new InvalidOperationException(validation.FailureReason ?? $"Dependencies not satisfied for '{modId}'.");
             }
 
             // Check if main DLL exists
@@ -462,6 +605,25 @@ public class ModRepository : IModRepository
         {
             _logger.Error(ex, "Failed to validate mod: {ModId}", modId);
             throw new InvalidOperationException($"Validation failed for '{modId}': {ex.Message}", ex);
+        }
+    }
+
+    public async Task<DependencyValidationOutcome> ValidateModDetailedAsync(string modId)
+    {
+        try
+        {
+            var mod = GetMod(modId);
+            if (mod == null)
+            {
+                return new DependencyValidationOutcome { Success = false, FailureReason = $"Mod '{modId}' is not installed." };
+            }
+
+            return ValidateDependencies(mod);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to perform detailed validation: {ModId}", modId);
+            return new DependencyValidationOutcome { Success = false, FailureReason = ex.Message };
         }
     }
 
@@ -593,6 +755,125 @@ public class ModRepository : IModRepository
             _logger.Error(ex, "Failed to restore mod from backup: {ModId}", modId);
             return false;
         }
+    }
+
+    public async Task<IEnumerable<RemoteModInfo>> GetAvailableModsAsync()
+    {
+        return await _discoveryService.GetAvailableModsAsync();
+    }
+
+    public async Task<InstallationResult> InstallModWithDependenciesAsync(RemoteModInfo mod)
+    {
+        try
+        {
+            _logger.Information("Starting recursive installation for {ModId}", mod.Id);
+            
+            // 1. Get all available mods to resolve dependencies
+            var allMods = await _discoveryService.GetAvailableModsAsync();
+            var modMap = allMods.ToDictionary(m => m.Id, m => m, StringComparer.OrdinalIgnoreCase);
+
+            // 2. Resolve dependencies
+            var toInstall = new List<RemoteModInfo>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var stack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!ResolveDependencies(mod, modMap, toInstall, visited, stack))
+            {
+                return new InstallationResult
+                {
+                    Success = false,
+                    Errors = new List<string> { "Circular dependency detected or dependency missing." }
+                };
+            }
+
+            // 3. Install in order
+            var result = new InstallationResult { Success = true };
+            
+            foreach (var modToInstall in toInstall)
+            {
+                 // Check if already installed
+                 var existing = GetMod(modToInstall.Id); // ID might differ slightly (Namespace-Name vs Name)
+                 // RemoteModInfo.Id is usually "Namespace-Name".
+                 // ModInfo.Id is usually "Namespace-Name" (if from manifest).
+                 // We should check if we need to update or install.
+                 
+                 // For now, let's just reinstall if it's the requested one, or install if missing.
+                 // Ideally skip if already installed and version matches.
+                 if (existing != null && existing.Version == modToInstall.Version)
+                 {
+                     _logger.Information("Mod {ModId} already installed at version {Version}. Skipping.", modToInstall.Id, modToInstall.Version);
+                     continue;
+                 }
+
+                 _logger.Information("Installing dependency {ModId}...", modToInstall.Id);
+                 var installResult = await InstallFromUrlAsync(modToInstall.DownloadUrl);
+                 
+                 if (!installResult.Success)
+                 {
+                     result.Success = false;
+                     result.Errors.AddRange(installResult.Errors);
+                     return result;
+                 }
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Recursive installation failed for {ModId}", mod.Id);
+            return new InstallationResult
+            {
+                Success = false,
+                Errors = new List<string> { $"Recursive install failed: {ex.Message}" }
+            };
+        }
+    }
+
+    private bool ResolveDependencies(
+        RemoteModInfo current, 
+        Dictionary<string, RemoteModInfo> allMods, 
+        List<RemoteModInfo> installList, 
+        HashSet<string> visited,
+        HashSet<string> stack)
+    {
+        if (visited.Contains(current.Id)) return true;
+        if (stack.Contains(current.Id)) return false; // Cycle
+
+        stack.Add(current.Id);
+
+        foreach (var depString in current.Dependencies)
+        {
+            // depString format: "Namespace-Name-Version"
+            var parts = depString.Split('-');
+            if (parts.Length < 3) continue;
+            
+            // Reconstruct ID: Namespace-Name (ignoring version for now to find the package)
+            // Or maybe ID IS Namespace-Name?
+            // Thunderstore ID is usually "Author-Name".
+            // depString is "Author-Name-Version".
+            
+            var depId = $"{parts[0]}-{parts[1]}";
+            
+            if (depId.Equals("BepInEx-BepInExPack", StringComparison.OrdinalIgnoreCase)) continue; // Skip BepInEx as it's manageable separately
+            
+            if (allMods.TryGetValue(depId, out var depMod))
+            {
+                if (!ResolveDependencies(depMod, allMods, installList, visited, stack))
+                    return false;
+            }
+            else
+            {
+                _logger.Warning("Dependency {DepId} not found in index.", depId);
+                // We proceed, hoping it might be optional or handled elsewhere, 
+                // but strictly we should maybe fail? For now, log warning.
+            }
+        }
+
+        stack.Remove(current.Id);
+        visited.Add(current.Id);
+        installList.Add(current);
+        
+        return true;
     }
 
     public void Dispose()

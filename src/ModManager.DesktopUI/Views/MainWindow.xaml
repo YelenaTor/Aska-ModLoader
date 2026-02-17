@@ -27,6 +27,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 
                 <TextBlock Text="Aska Mod Manager" 
@@ -34,12 +36,39 @@
                            FontWeight="SemiBold"
                            VerticalAlignment="Center" />
                 
-                <Button Content="⚙" 
-                        Width="30" 
-                        Height="30"
-                        Padding="0"
-                        Background="Transparent"
-                        BorderThickness="0" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0">
+                    <TextBlock Text="BepInEx: " Foreground="Gray" />
+                    <TextBlock Text="{Binding RuntimeStatus}" FontWeight="SemiBold">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="IndianRed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsRuntimeReady}" Value="True">
+                                        <Setter Property="Foreground" Value="LightGreen" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Text="{Binding BepInExVersion, StringFormat=' (v{0})'}" 
+                               Foreground="Gray" 
+                               Visibility="{Binding IsRuntimeReady, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <TextBlock Foreground="Gray"
+                               Visibility="{Binding IsRuntimeReady, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value=" | HarmonyX: ❌" />
+                                <Setter Property="Foreground" Value="IndianRed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsHarmonyInstalled}" Value="True">
+                                        <Setter Property="Text" Value="{Binding HarmonyVersion, StringFormat=' | HarmonyX: v{0}'}" />
+                                        <Setter Property="Foreground" Value="Gray" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
 
                 <Button Grid.Column="2"
                         Content="Configure Game Path"
@@ -54,6 +83,24 @@
                         Margin="10,0,0,0"
                         Command="{Binding InstallBepInExCommand}"
                         Visibility="{Binding CanInstallBepInEx, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                <Button Grid.Column="4"
+                        Content="Check for Updates"
+                        Padding="8,4"
+                        Margin="10,0,0,0"
+                        Command="{Binding CheckForUpdatesCommand}" />
+
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Margin="20,0,0,0">
+                    <CheckBox Content="Close on Launch" 
+                              IsChecked="{Binding CloseOnLaunch}" 
+                              VerticalAlignment="Center" 
+                              Margin="0,0,10,0"/>
+                    <Button Content="PLAY" 
+                            Command="{Binding LaunchGameCommand}"
+                            Padding="20,5" 
+                            FontWeight="Bold"
+                            Style="{DynamicResource MahApps.Styles.Button.Square.Accent}" />
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -70,6 +117,39 @@
                            Foreground="White" 
                            FontWeight="SemiBold"
                            VerticalAlignment="Center" />
+                
+                <Button Content="Kill Game Process"
+                        Style="{StaticResource MahApps.Styles.Button.Flat}"
+                        Foreground="White"
+                        BorderBrush="White"
+                        BorderThickness="1"
+                        Padding="10,2"
+                        Margin="20,0,0,0"
+                        Command="{Binding KillGameCommand}" />
+            </StackPanel>
+        </Border>
+
+        <!-- App Update Banner -->
+        <Border Grid.Row="1" 
+                Background="SteelBlue" 
+                Visibility="{Binding IsAppUpdateAvailable, Converter={StaticResource BooleanToVisibilityConverter}}"
+                Panel.ZIndex="9"
+                VerticalAlignment="Top"
+                Margin="0,0,0,0"
+                Padding="8">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <TextBlock Text="⬆" FontSize="14" Foreground="White" Margin="0,0,8,0" />
+                <TextBlock Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center">
+                    <Run Text="Mod Manager update available: v" /><Run Text="{Binding AppUpdateVersion}" />
+                </TextBlock>
+                <Button Content="Update Now"
+                        Style="{StaticResource MahApps.Styles.Button.Flat}"
+                        Foreground="White"
+                        BorderBrush="White"
+                        BorderThickness="1"
+                        Padding="10,2"
+                        Margin="20,0,0,0"
+                        Command="{Binding UpdateAppCommand}" />
             </StackPanel>
         </Border>
 
@@ -116,6 +196,35 @@
                             <DataGrid.Columns>
                                 <DataGridCheckBoxColumn Header="Enabled" 
                                                         Binding="{Binding IsEnabled, Mode=TwoWay}" />
+                                <DataGridTemplateColumn Header="Status" Width="50">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock HorizontalAlignment="Center" FontSize="14" ToolTip="{Binding TooltipText}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="✔" />
+                                                        <Setter Property="Foreground" Value="LightGreen" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasErrors}" Value="True">
+                                                                <Setter Property="Text" Value="❌" />
+                                                                <Setter Property="Foreground" Value="IndianRed" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding HasWarnings}" Value="True">
+                                                                <Setter Property="Text" Value="⚠" />
+                                                                <Setter Property="Foreground" Value="Orange" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsUpdateAvailable}" Value="True">
+                                                                <Setter Property="Text" Value="⬆" />
+                                                                <Setter Property="Foreground" Value="SkyBlue" />
+                                                                <Setter Property="ToolTip" Value="{Binding TooltipText}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Name" 
                                                     Binding="{Binding Name}" 
                                                     IsReadOnly="True" />
@@ -154,6 +263,13 @@
                                     Padding="8,4"
                                     Margin="0,0,5,0"
                                     Command="{Binding DisableModCommand}" />
+                            <Button Content="Update" 
+                                    Padding="8,4"
+                                    Margin="0,0,5,0"
+                                    Background="SkyBlue"
+                                    Foreground="Black"
+                                    Command="{Binding UpdateSelectedModCommand}"
+                                    Visibility="{Binding SelectedMod.IsUpdateAvailable, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             <Button Content="Uninstall" 
                                     Padding="8,4"
                                     Background="IndianRed"
@@ -171,7 +287,7 @@
                                 <TextBlock Text="{Binding SelectedMod.Version}" 
                                            FontSize="14" 
                                            Foreground="Gray" />
-                                <TextBlock Text="by {Binding SelectedMod.Author}" 
+                                <TextBlock Text="{Binding SelectedMod.Author, StringFormat='by {0}'}" 
                                            FontSize="12" 
                                            Foreground="Gray" />
                                 
@@ -207,18 +323,79 @@
                                 <TextBlock Text="Installation Info" 
                                            FontWeight="SemiBold" 
                                            Margin="0,0,0,5" />
-                                <TextBlock Text="Path: {Binding SelectedMod.InstallPath}" 
+                                <TextBlock Text="{Binding SelectedMod.InstallPath, StringFormat='Path: {0}'}" 
                                            FontSize="12" 
                                            Foreground="Gray" />
-                                <TextBlock Text="Installed: {Binding SelectedMod.InstallDate}" 
+                                <TextBlock Text="{Binding SelectedMod.InstallDate, StringFormat='Installed: {0}'}" 
                                            FontSize="12" 
                                            Foreground="Gray" />
-                                <TextBlock Text="Updated: {Binding SelectedMod.LastUpdated}" 
+                                <TextBlock Text="{Binding SelectedMod.LastUpdated, StringFormat='Updated: {0}'}" 
                                            FontSize="12" 
                                            Foreground="Gray" />
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Discovery">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <TextBlock Text="Available Mods" 
+                                   FontSize="18" 
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,20,0"/>
+                        
+                        <TextBox Width="200"
+                                 Controls:TextBoxHelper.Watermark="Search..."
+                                 Controls:TextBoxHelper.ClearTextButton="True"
+                                 Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="0,0,10,0"
+                                 VerticalAlignment="Center" />
+                        
+                        <TextBlock Text="Sort by:" VerticalAlignment="Center" Margin="0,0,5,0" />
+                        <ComboBox ItemsSource="{Binding SortOptions}"
+                                  SelectedItem="{Binding SelectedSortOption}"
+                                  Width="120"
+                                  VerticalAlignment="Center" />
+
+                        <Button Content="Refresh" 
+                                Padding="8,4"
+                                Margin="10,0,0,0"
+                                Command="{Binding FetchAvailableModsCommand}" />
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="1"
+                              ItemsSource="{Binding DiscoveredMods}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              GridLinesVisibility="Horizontal"
+                              HeadersVisibility="Column"
+                              IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="200" />
+                            <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="80" />
+                            <DataGridTextColumn Header="Author" Binding="{Binding Author}" Width="120" />
+                            <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" />
+                            <DataGridTemplateColumn Header="Action" Width="100">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Install" 
+                                                Padding="8,2"
+                                                Command="{Binding DataContext.InstallRemoteModCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </Grid>
             </TabItem>
             
@@ -261,5 +438,23 @@
                 <TextBlock Text="{Binding StatusMessage}" />
             </StatusBarItem>
         </StatusBar>
+
+        <!-- Loading Overlay -->
+        <Grid Grid.Row="0" Grid.RowSpan="3" 
+              Background="#80000000" 
+              Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}"
+              Panel.ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Controls:ProgressRing IsActive="{Binding IsBusy}" 
+                                      Width="60" 
+                                      Height="60" 
+                                      Foreground="White" />
+                <TextBlock Text="{Binding BusyMessage}" 
+                           Foreground="White" 
+                           FontSize="18" 
+                           Margin="0,20,0,0" 
+                           HorizontalAlignment="Center" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Controls:MetroWindow>

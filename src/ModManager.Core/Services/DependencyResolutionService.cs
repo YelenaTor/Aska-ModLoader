@@ -41,6 +41,10 @@ public class DependencyResolutionService
             var circularDeps = FindCircularDependencies(dependencyGraph);
             result.CircularDependencies.AddRange(circularDeps);
 
+            // Check for incompatibilities
+            var incompatibilities = FindIncompatibilities(mods, modDictionary);
+            result.Incompatibilities.AddRange(incompatibilities);
+
             // Calculate load order
             if (result.MissingDependencies.Count == 0 && result.CircularDependencies.Count == 0)
             {
@@ -107,6 +111,31 @@ public class DependencyResolutionService
             }
 
             graph.AddNode(node);
+        }
+
+        // Second pass: add soft dependency edges (LoadAfter/LoadBefore)
+        foreach (var mod in mods)
+        {
+            if (graph.Nodes.TryGetValue(mod.Id, out var node))
+            {
+                // LoadAfter: this mod loads after the listed mods (edge from listed → this)
+                foreach (var afterId in mod.LoadAfter)
+                {
+                    if (graph.Nodes.ContainsKey(afterId))
+                    {
+                        node.Dependencies.Add(afterId);
+                    }
+                }
+
+                // LoadBefore: this mod loads before the listed mods (edge from this → listed)
+                foreach (var beforeId in mod.LoadBefore)
+                {
+                    if (graph.Nodes.TryGetValue(beforeId, out var beforeNode))
+                    {
+                        beforeNode.Dependencies.Add(mod.Id);
+                    }
+                }
+            }
         }
 
         return graph;
@@ -246,6 +275,46 @@ public class DependencyResolutionService
     }
 
     /// <summary>
+    /// Finds incompatibilities between enabled mods
+    /// </summary>
+    private List<IncompatibilityConflict> FindIncompatibilities(IEnumerable<ModInfo> mods, Dictionary<string, ModInfo> modDictionary)
+    {
+        var conflicts = new List<IncompatibilityConflict>();
+        var seenPairs = new HashSet<string>();
+
+        foreach (var mod in mods)
+        {
+            foreach (var incompat in mod.IncompatibleWith)
+            {
+                if (modDictionary.TryGetValue(incompat.Id, out var conflictingMod))
+                {
+                    // Avoid duplicate pair reports (A↔B = B↔A)
+                    var pairKey = string.Compare(mod.Id, incompat.Id, StringComparison.Ordinal) < 0
+                        ? $"{mod.Id}|{incompat.Id}"
+                        : $"{incompat.Id}|{mod.Id}";
+
+                    if (seenPairs.Add(pairKey))
+                    {
+                        conflicts.Add(new IncompatibilityConflict
+                        {
+                            ModId = mod.Id,
+                            ModName = mod.Name,
+                            IncompatibleModId = conflictingMod.Id,
+                            IncompatibleModName = conflictingMod.Name,
+                            Reason = incompat.Reason
+                        });
+
+                        _logger.Warning("Incompatibility detected: {ModA} ↔ {ModB} ({Reason})",
+                            mod.Name, conflictingMod.Name, incompat.Reason ?? "no reason given");
+                    }
+                }
+            }
+        }
+
+        return conflicts;
+    }
+
+    /// <summary>
     /// Calculates load order using topological sort
     /// </summary>
     private List<string> CalculateLoadOrder(DependencyGraph graph)
@@ -369,10 +438,11 @@ public class DependencyResolutionResult
     public List<MissingDependency> MissingDependencies { get; set; } = new();
     public List<VersionConflict> VersionConflicts { get; set; } = new();
     public List<CircularDependency> CircularDependencies { get; set; } = new();
+    public List<IncompatibilityConflict> Incompatibilities { get; set; } = new();
     public List<string> Errors { get; set; } = new();
 
     public void AddError(string error) => Errors.Add(error);
-    public bool HasIssues => MissingDependencies.Count > 0 || VersionConflicts.Count > 0 || CircularDependencies.Count > 0;
+    public bool HasIssues => MissingDependencies.Count > 0 || VersionConflicts.Count > 0 || CircularDependencies.Count > 0 || Incompatibilities.Count > 0;
 }
 
 /// <summary>
@@ -409,57 +479,13 @@ public class DependencyNode
 }
 
 /// <summary>
-/// Represents a missing dependency
+/// Represents an incompatibility between two mods
 /// </summary>
-public class MissingDependency
+public class IncompatibilityConflict
 {
     public string ModId { get; set; } = string.Empty;
     public string ModName { get; set; } = string.Empty;
-    public string DependencyId { get; set; } = string.Empty;
-    public string RequiredVersion { get; set; } = string.Empty;
-    public bool IsOptional { get; set; }
-}
-
-/// <summary>
-/// Represents a version conflict
-/// </summary>
-public class VersionConflict
-{
-    public string ModId { get; set; } = string.Empty;
-    public string ModName { get; set; } = string.Empty;
-    public string DependencyId { get; set; } = string.Empty;
-    public string DependencyName { get; set; } = string.Empty;
-    public string RequiredVersion { get; set; } = string.Empty;
-    public string InstalledVersion { get; set; } = string.Empty;
-    public VersionConflictType ConflictType { get; set; }
-}
-
-/// <summary>
-/// Represents a circular dependency
-/// </summary>
-public class CircularDependency
-{
-    public List<string> ModIds { get; set; } = new();
-    public string CycleDescription { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Result of version compatibility check
-/// </summary>
-public class VersionCompatibility
-{
-    public bool IsCompatible { get; set; }
-    public VersionConflictType ConflictType { get; set; }
-    public string? ErrorMessage { get; set; }
-}
-
-/// <summary>
-/// Types of version conflicts
-/// </summary>
-public enum VersionConflictType
-{
-    TooOld,
-    TooNew,
-    InvalidFormat,
-    IncompatibleRange
+    public string IncompatibleModId { get; set; } = string.Empty;
+    public string IncompatibleModName { get; set; } = string.Empty;
+    public string? Reason { get; set; }
 }

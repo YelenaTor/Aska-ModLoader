@@ -44,7 +44,11 @@ namespace ModManager.DesktopUI.Views
                     facade = new RealModManagerFacade(modRepository, logger, gamePath);
                 }
 
-                var viewModel = new MainWindowViewModel(facade, gamePathService, logger);
+                // Create additional services
+                var appSettingsService = new AppSettingsService(logger);
+                var gameLauncherService = new GameLauncherService(logger);
+
+                var viewModel = new MainWindowViewModel(facade, gamePathService, gameLauncherService, appSettingsService, logger);
                 DataContext = viewModel;
 
                 logger.Information("Application initialized successfully");
@@ -61,7 +65,11 @@ namespace ModManager.DesktopUI.Views
                 var fallbackDetection = new AskaSteamDetectionService(logger);
                 var fallbackGamePathService = new GamePathService(logger, fallbackDetection);
 
-                var errorViewModel = new MainWindowViewModel(errorFacade, fallbackGamePathService, logger);
+                // Create services for error view
+                var appSettingsService = new AppSettingsService(logger);
+                var gameLauncherService = new GameLauncherService(logger);
+
+                var errorViewModel = new MainWindowViewModel(errorFacade, fallbackGamePathService, gameLauncherService, appSettingsService, logger);
                 DataContext = errorViewModel;
             }
         }

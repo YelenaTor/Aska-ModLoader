@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace ModManager.Core.Models;
 
 /// <summary>
@@ -19,4 +21,8 @@ public class DependencyValidationOutcome
     /// Any additional errors that occurred during validation.
     /// </summary>
     public IEnumerable<string>? Errors { get; set; }
+
+    public List<MissingDependency> MissingDependencies { get; set; } = new();
+    public List<VersionConflict> VersionConflicts { get; set; } = new();
+    public List<CircularDependency> CircularDependencies { get; set; } = new();
 }

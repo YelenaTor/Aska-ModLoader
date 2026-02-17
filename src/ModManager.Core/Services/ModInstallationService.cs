@@ -90,8 +90,40 @@ public class ModInstallationService
 
             if (string.IsNullOrWhiteSpace(manifest.Entry))
             {
-                result.AddError("Manifest entry point is required");
-                return result;
+                // Auto-detect entry from extracted DLL files
+                var extractedDir = Path.GetDirectoryName(
+                    Directory.GetFiles(Path.GetDirectoryName(zipPath) ?? sessionTempPath, "manifest.json", SearchOption.AllDirectories).FirstOrDefault()
+                ) ?? sessionTempPath;
+                var dlls = Directory.GetFiles(sessionTempPath, "*.dll", SearchOption.AllDirectories);
+                if (dlls.Length > 0)
+                {
+                    manifest.Entry = Path.GetFileName(dlls[0]);
+                    if (!manifest.Files.Contains(manifest.Entry))
+                        manifest.Files.Add(manifest.Entry);
+                    _logger.Information("Auto-detected entry point: {Entry}", manifest.Entry);
+                }
+                else
+                {
+                    result.AddError("No entry point specified and no DLL files found in archive");
+                    return result;
+                }
+            }
+
+            // Detect mod source from manifest metadata
+            result.DetectedSource = DetectPackageSource(manifest);
+            switch (result.DetectedSource)
+            {
+                case ModPackageSource.Thunderstore:
+                    _logger.Information("Detected Thunderstore package: {ModId}", manifest.Id);
+                    break;
+                case ModPackageSource.NexusMods:
+                    _logger.Information("Detected Nexus Mods package: {ModId}", manifest.Id);
+                    result.AddWarning("This mod was sourced from Nexus Mods. It will be installed, but update tracking and dependency resolution may be limited.");
+                    break;
+                default:
+                    _logger.Information("Unknown mod source for: {ModId}", manifest.Id);
+                    result.AddWarning("This mod is from an unrecognized source. It will be installed, but full compatibility is not guaranteed.");
+                    break;
             }
 
             // Validate dependencies before touching plugins
@@ -116,7 +148,7 @@ public class ModInstallationService
                 }
 
                 _logger.Information("Overwriting existing mod: {ModId}", manifest.Id);
-                backupPath = BackupExistingMod(modPath);
+                backupPath = await BackupExistingModAsync(modPath);
             }
 
             // Ensure entry is part of files list
@@ -134,34 +166,47 @@ public class ModInstallationService
             }
 
             // Install the mod
-            var stagedModPath = Path.Combine(stagingPath, manifest.Id);
-            var installResult = await InstallModFilesAsync(extractResult.ExtractedPath!, manifest, stagedModPath);
-            if (!installResult.Success)
-            {
-                result.AddErrors(installResult.Errors);
-                return result;
-            }
+             var stagedModPath = Path.Combine(stagingPath, manifest.Id);
+             _logger.Information("Staging mod files at: {StagingPath}", stagedModPath);
+             
+             var installResult = await InstallModFilesAsync(extractResult.ExtractedPath!, manifest, stagedModPath);
+             if (!installResult.Success)
+             {
+                 _logger.Error("Failed to stage mod files: {Errors}", string.Join(", ", installResult.Errors));
+                 result.AddErrors(installResult.Errors);
+                 return result;
+             }
 
-            // Move staged install into plugins directory
-            if (Directory.Exists(modPath))
-            {
-                Directory.Delete(modPath, true);
-            }
+             // Move staged install into plugins directory
+             _logger.Information("Moving staged mod to final location: {ModPath}", modPath);
+             if (Directory.Exists(modPath))
+             {
+                 _logger.Information("Removing existing mod directory before move");
+                 Directory.Delete(modPath, true);
+             }
 
-            Directory.Move(stagedModPath, modPath);
+             // Use FileOperationsService to handle cross-volume moves
+             if (!await _fileOps.MoveDirectoryAsync(stagedModPath, modPath))
+             {
+                 var error = $"Failed to move mod to final location: {stagedModPath} -> {modPath}";
+                 _logger.Error(error);
+                 result.AddError(error);
+                 return result;
+             }
 
-            // Remove backup snapshot after success
-            if (!string.IsNullOrEmpty(backupPath) && Directory.Exists(backupPath))
-            {
-                Directory.Delete(backupPath, true);
-            }
+             // Remove backup snapshot after success
+             if (!string.IsNullOrEmpty(backupPath) && Directory.Exists(backupPath))
+             {
+                 _logger.Information("Installation successful, removing backup");
+                 Directory.Delete(backupPath, true);
+             }
 
-            result.Success = true;
-            result.InstalledModId = manifest.Id;
-            result.InstalledModInfo = await CreateModInfoAsync(manifest, modPath);
+             result.Success = true;
+             result.InstalledModId = manifest.Id;
+             result.InstalledModInfo = await CreateModInfoAsync(manifest, modPath);
 
-            _logger.Information("Successfully installed mod: {ModId} v{Version}", manifest.Id, manifest.Version);
-            return result;
+             _logger.Information("Successfully installed mod: {ModId} v{Version}", manifest.Id, manifest.Version);
+             return result;
         }
         catch (Exception ex)
         {
@@ -210,8 +255,14 @@ public class ModInstallationService
             {
                 try
                 {
-                    Directory.Move(backupPath, modPath);
-                    _logger.Information("Restored backup for {ModId}", manifest?.Id ?? "unknown");
+                    if (await _fileOps.MoveDirectoryAsync(backupPath, modPath))
+                    {
+                        _logger.Information("Restored backup for {ModId}", manifest?.Id ?? "unknown");
+                    }
+                    else
+                    {
+                        throw new IOException("Failed to restore backup directory");
+                    }
                 }
                 catch (Exception restoreEx)
                 {
@@ -303,11 +354,18 @@ public class ModInstallationService
                 var validationResult = await _manifestService.ParseAndValidateManifestAsync(manifestPath);
                 if (validationResult.IsValid)
                 {
-                    var parseResult = await _manifestService.ParseManifestAsync(await File.ReadAllTextAsync(manifestPath));
+                    // Use the manifest from validation (preserves auto-detected Entry)
+                    if (validationResult.Manifest == null)
+                    {
+                        // Fallback: re-parse if somehow manifest wasn't preserved
+                        var parseResult = await _manifestService.ParseManifestAsync(await File.ReadAllTextAsync(manifestPath));
+                        validationResult.Manifest = parseResult.Manifest;
+                    }
                     return new ManifestValidationResult
                     {
                         IsValid = true,
-                        Manifest = parseResult.Manifest,
+                        Success = true,
+                        Manifest = validationResult.Manifest,
                         Errors = validationResult.Errors,
                         Warnings = validationResult.Warnings
                     };
@@ -319,6 +377,41 @@ public class ModInstallationService
         var result = new ManifestValidationResult();
         result.AddError("No valid manifest.json found in ZIP file");
         return result;
+    }
+
+    /// <summary>
+    /// Detects the origin platform of a mod package from its manifest metadata
+    /// </summary>
+    private ModPackageSource DetectPackageSource(ModManifest manifest)
+    {
+        // Primary heuristic: website_url
+        if (!string.IsNullOrWhiteSpace(manifest.WebsiteUrl))
+        {
+            var url = manifest.WebsiteUrl.ToLowerInvariant();
+            if (url.Contains("thunderstore.io"))
+                return ModPackageSource.Thunderstore;
+            if (url.Contains("nexusmods.com"))
+                return ModPackageSource.NexusMods;
+        }
+
+        // Secondary heuristic: Thunderstore dependency format (Author-ModName-Version)
+        if (manifest.Dependencies?.Any(d =>
+            !string.IsNullOrEmpty(d.Id) &&
+            d.Id.Count(c => c == '-') >= 2 &&
+            d.Id.StartsWith("BepInEx", StringComparison.OrdinalIgnoreCase)) == true)
+        {
+            return ModPackageSource.Thunderstore;
+        }
+
+        // Tertiary: if the manifest has a source block with type, use that
+        if (manifest.Source != null && !string.IsNullOrWhiteSpace(manifest.Source.Type))
+        {
+            var type = manifest.Source.Type.ToLowerInvariant();
+            if (type.Contains("thunderstore")) return ModPackageSource.Thunderstore;
+            if (type.Contains("nexus")) return ModPackageSource.NexusMods;
+        }
+
+        return ModPackageSource.Unknown;
     }
 
     /// <summary>
@@ -422,17 +515,25 @@ public class ModInstallationService
     /// <summary>
     /// Creates backup of existing mod
     /// </summary>
-    private string? BackupExistingMod(string modPath)
+    private async Task<string?> BackupExistingModAsync(string modPath)
     {
         try
         {
             var backupPath = modPath + ".backup." + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
             if (Directory.Exists(modPath))
             {
-                Directory.Move(modPath, backupPath);
-                _logger.Information("Backed up existing mod to: {BackupPath}", backupPath);
+                if (await _fileOps.MoveDirectoryAsync(modPath, backupPath))
+                {
+                    _logger.Information("Backed up existing mod to: {BackupPath}", backupPath);
+                    return backupPath;
+                }
+                else
+                {
+                    _logger.Warning("Failed to move mod for backup: {ModPath} -> {BackupPath}", modPath, backupPath);
+                    return null;
+                }
             }
-            return backupPath;
+            return null; // Should not happen if Directory.Exists checked before calling, but for safety
         }
         catch (Exception ex)
         {
@@ -536,13 +637,27 @@ public class InstallationResult
     public bool Success { get; set; }
     public string? InstalledModId { get; set; }
     public ModInfo? InstalledModInfo { get; set; }
-    public List<string> Errors { get; } = new();
-    public List<string> Warnings { get; } = new();
+    public ModPackageSource DetectedSource { get; set; } = ModPackageSource.Unknown;
+    public List<string> Errors { get; set; } = new();
+    public List<string> Warnings { get; set; } = new();
 
     public void AddError(string error) => Errors.Add(error);
     public void AddWarning(string warning) => Warnings.Add(warning);
     public void AddErrors(IEnumerable<string> errors) => Errors.AddRange(errors);
     public void AddWarnings(IEnumerable<string> warnings) => Warnings.AddRange(warnings);
+}
+
+/// <summary>
+/// Detected origin platform for a mod package
+/// </summary>
+public enum ModPackageSource
+{
+    /// <summary>Thunderstore package — fully supported</summary>
+    Thunderstore,
+    /// <summary>Nexus Mods package — installed but with limited support</summary>
+    NexusMods,
+    /// <summary>Unknown origin — installed but compatibility is not guaranteed</summary>
+    Unknown
 }
 
 /// <summary>

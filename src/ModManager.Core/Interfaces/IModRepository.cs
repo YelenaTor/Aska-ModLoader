@@ -1,4 +1,5 @@
 using ModManager.Core.Models;
+using ModManager.Core.Services;
 
 namespace ModManager.Core.Interfaces;
 
@@ -20,12 +21,12 @@ public interface IModRepository
     /// <summary>
     /// Installs a mod from a ZIP file
     /// </summary>
-    Task InstallFromZipAsync(string zipPath);
+    Task<InstallationResult> InstallFromZipAsync(string zipPath);
 
     /// <summary>
     /// Installs a mod from a URL
     /// </summary>
-    Task InstallFromUrlAsync(Uri packageUrl);
+    Task<InstallationResult> InstallFromUrlAsync(Uri packageUrl);
 
     /// <summary>
     /// Uninstalls a mod
@@ -35,7 +36,7 @@ public interface IModRepository
     /// <summary>
     /// Enables or disables a mod
     /// </summary>
-    Task SetEnabledAsync(string modId, bool enabled);
+    Task<DependencyValidationOutcome> SetEnabledAsync(string modId, bool enabled);
 
     /// <summary>
     /// Updates a mod to the latest version
@@ -53,6 +54,11 @@ public interface IModRepository
     Task<bool> ValidateModAsync(string modId);
 
     /// <summary>
+    /// Performs detailed mod validation including dependencies
+    /// </summary>
+    Task<DependencyValidationOutcome> ValidateModDetailedAsync(string modId);
+
+    /// <summary>
     /// Logs a runtime error to the repository
     /// </summary>
     Task LogRuntimeErrorAsync(RuntimeError error);
@@ -66,40 +72,14 @@ public interface IModRepository
     /// Clears runtime errors, optionally keeping only the last N
     /// </summary>
     Task ClearRuntimeErrorsAsync(int keepLast = 0);
+
+    /// <summary>
+    /// Gets a list of mods available for discovery
+    /// </summary>
+    Task<IEnumerable<RemoteModInfo>> GetAvailableModsAsync();
+    /// <summary>
+    /// Installs a mod and its dependencies from a remote source
+    /// </summary>
+    Task<InstallationResult> InstallModWithDependenciesAsync(RemoteModInfo mod);
 }
 
-/// <summary>
-/// Represents information about an available mod update
-/// </summary>
-public class ModUpdateInfo
-{
-    /// <summary>
-    /// ID of the mod that has an update
-    /// </summary>
-    public string ModId { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Current installed version
-    /// </summary>
-    public string CurrentVersion { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Latest available version
-    /// </summary>
-    public string LatestVersion { get; set; } = string.Empty;
-
-    /// <summary>
-    /// URL to download the update
-    /// </summary>
-    public Uri DownloadUrl { get; set; } = new Uri("about:blank");
-
-    /// <summary>
-    /// Changelog for the update
-    /// </summary>
-    public string? Changelog { get; set; }
-
-    /// <summary>
-    /// Whether the update is mandatory
-    /// </summary>
-    public bool IsMandatory { get; set; }
-}

@@ -17,6 +17,22 @@ public class ModDisplayModel
     public List<ModDependencyDisplayModel> Dependencies { get; set; } = new();
     public List<string> Warnings { get; set; } = new();
     public List<string> Errors { get; set; } = new();
+
+    public bool HasWarnings => Warnings.Count > 0;
+    public bool HasErrors => Errors.Count > 0;
+    public bool IsUpdateAvailable { get; set; }
+    public string? LatestVersion { get; set; }
+
+    public string TooltipText
+    {
+        get
+        {
+            if (HasErrors) return string.Join("\n", Errors);
+            if (IsUpdateAvailable) return $"Update available: v{LatestVersion}";
+            if (HasWarnings) return string.Join("\n", Warnings);
+            return "Mod is healthy";
+        }
+    }
 }
 
 /// <summary>
@@ -40,6 +56,7 @@ public class FacadeOperationResult
     public string Message { get; set; } = string.Empty;
     public List<string> Errors { get; set; } = new();
     public List<string> Warnings { get; set; } = new();
+    public List<ModDependencyDisplayModel> DependencyErrors { get; set; } = new();
 
     public static FacadeOperationResult SuccessResult(string message)
     {
